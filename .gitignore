@@ -6,7 +6,6 @@ jspm_packages/
 # --- 构建与输出目录 ---
 # 忽略构建后的文件（如 dist, build, out 等）
 dist/
-build/
 out/
 # Webpack 或 Vite 等打包工具的缓存
 .webpack/
