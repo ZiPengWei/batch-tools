@@ -1,0 +1,67 @@
+# --- 依赖目录 ---
+# 忽略 Node.js 依赖包（必须，因为 package-lock.json 已经锁定了版本）
+node_modules/
+jspm_packages/
+
+# --- 构建与输出目录 ---
+# 忽略构建后的文件（如 dist, build, out 等）
+dist/
+build/
+out/
+# Webpack 或 Vite 等打包工具的缓存
+.webpack/
+.cache/
+
+# --- Electron 特有 ---
+# Electron 编译后的二进制文件 / 临时文件
+app/
+# 一些构建脚本会生成 app 目录用于打包，不应提交
+release/
+
+# --- 日志与调试 ---
+# 日志文件
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+# 编辑器和调试器
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# --- 操作系统生成文件 ---
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+# Linux
+*~
+
+# --- 环境变量与密钥 ---
+# 本地环境配置（极其重要，防止泄露密钥）
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+
+# --- 测试覆盖率 ---
+coverage/
+.nyc_output/
+
+# --- 其他可选 ---
+# package-lock.json 如果团队不允许锁定依赖可以放开（但通常建议提交）
+# package-lock.json 
