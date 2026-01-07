@@ -91,12 +91,18 @@ ipcMain.handle(
 ipcMain.handle(
   "gitlab:batch-merge",
   async (
-    _event: IpcMainInvokeEvent,
+    event: IpcMainInvokeEvent,
     payload: BatchMergeRequest
   ): Promise<BatchMergeResponse> => {
+    const runId = payload.runId;
     const res = await mergeService.runAtomicBatchMerge(
       payload.projectId,
-      payload.pairs
+      payload.pairs,
+      {
+        onLog: (text, error) => {
+          event.sender.send("gitlab:batch-merge-log", { runId, text, error });
+        },
+      }
     );
     return res;
   }

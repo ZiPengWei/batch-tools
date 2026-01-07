@@ -16,15 +16,18 @@
     "vue": "^3.4.21"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^25.0.3",
     "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/test-utils": "^2.4.6",
     "electron": "^30.0.1",
     "electron-builder": "^24.13.3",
+    "jsdom": "^26.0.0",
     "typescript": "^5.2.2",
     "vite": "^5.1.6",
     "vite-plugin-electron": "^0.28.6",
     "vite-plugin-electron-renderer": "^0.14.5",
-    "vitest": "^4.0.16",
+    "vitest": "^1.6.0",
     "vue-tsc": "^2.0.26"
   },
   "main": "dist-electron/main.js",

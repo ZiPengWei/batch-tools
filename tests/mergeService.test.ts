@@ -13,6 +13,23 @@ function createClientMock() {
 }
 
 describe('MergeService.runAtomicBatchMerge', () => {
+  it('opts.onLog 会收到进度日志', async () => {
+    const client = createClientMock()
+    client.createMergeRequest.mockResolvedValueOnce({ iid: 1 })
+    const service = new MergeService(client as any)
+    vi.spyOn(service, 'waitUntilMergeable').mockResolvedValueOnce({ ok: true, details: { iid: 1 } } as any)
+    vi.spyOn(service, 'waitUntilMerged').mockResolvedValueOnce({ ok: true, details: { iid: 1 } } as any)
+
+    const onLog = vi.fn()
+    await service.runAtomicBatchMerge(1, [{ source: 'feat', target: 'main' }], { onLog })
+
+    expect(onLog).toHaveBeenCalled()
+    const texts = onLog.mock.calls.map((c) => c[0])
+    expect(texts.some((t) => String(t).includes('正在创建 MR'))).toBe(true)
+    expect(texts.some((t) => String(t).includes('=== 阶段 2'))).toBe(true)
+    expect(texts.some((t) => String(t).includes('=== 阶段 3'))).toBe(true)
+  })
+
   it('source==target 时返回 noop 且不创建 MR', async () => {
     const client = createClientMock()
     const service = new MergeService(client as any)
@@ -97,4 +114,3 @@ describe('MergeService.runAtomicBatchMerge', () => {
     expect(res.conflicts[0]).toMatchObject({ mrIid: 3 })
   })
 })
-

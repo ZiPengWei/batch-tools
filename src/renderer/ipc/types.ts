@@ -29,9 +29,15 @@ export type ListBranchesResponse = {
 export type BatchMergeRequest = {
   projectId: number
   pairs: MergePair[]
+  runId?: string
 }
 
 export type BatchMergeResponse = MergeResult
 
-export type GitLabRawProject = GitLabProject
+export type BatchMergeLogEvent = {
+  runId?: string
+  text: string
+  error?: boolean
+}
 
+export type GitLabRawProject = GitLabProject

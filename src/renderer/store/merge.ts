@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { batchMerge } from "../ipc/bridge";
+import { batchMerge, onBatchMergeLog } from "../ipc/bridge";
 
 export type MergeRunSummary =
   | {
@@ -23,6 +23,7 @@ export const useMergeStore = defineStore("merge", {
     progressMax: 0,
     progressValue: 0,
     running: false,
+    activeRunId: "",
   }),
   actions: {
     setTargets(branches: string[]) {
@@ -53,6 +54,8 @@ export const useMergeStore = defineStore("merge", {
       this.progressValue = 0;
       this.running = true;
       this.logLines = [];
+      const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      this.activeRunId = runId;
       this.log("=== 开始批量合并 ===");
 
       const payload = {
@@ -63,9 +66,16 @@ export const useMergeStore = defineStore("merge", {
             target: t,
           }))
         ),
+        runId,
       };
 
+      let stopListen: (() => void) | null = null;
       try {
+        stopListen = onBatchMergeLog((e) => {
+          if (e?.runId && e.runId !== this.activeRunId) return;
+          if (!e?.text) return;
+          this.log(e.text, !!e.error);
+        });
         const res = await batchMerge(payload);
         if (res.ok) {
           const mergedCount = res.mergedIids.length;
@@ -96,7 +106,9 @@ export const useMergeStore = defineStore("merge", {
           message: msg,
         };
       } finally {
+        stopListen?.();
         this.running = false;
+        this.activeRunId = "";
       }
     },
   },
