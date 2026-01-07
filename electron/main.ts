@@ -110,17 +110,19 @@ ipcMain.handle(
 
 function createWindow() {
   const workArea = screen.getPrimaryDisplay().workAreaSize;
-  const desiredWidth = 1450;
-  const desiredHeight = 1000;
-  const width = Math.min(desiredWidth, workArea.width);
-  const height = Math.min(desiredHeight, workArea.height);
+  const minWidth = 1300;
+  const minHeight = 880;
+  const desiredWidth = 1300;
+  const desiredHeight = 880;
+  const width = Math.max(minWidth, Math.min(desiredWidth, workArea.width));
+  const height = Math.max(minHeight, Math.min(desiredHeight, workArea.height));
 
   win = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC, "icon.png"),
     width,
     height,
-    minWidth: 900,
-    minHeight: 680,
+    minWidth,
+    minHeight,
     maxWidth: 1600,
     maxHeight: 1200,
     webPreferences: {

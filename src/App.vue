@@ -243,7 +243,7 @@ onMounted(() => {
                 :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
               />
             </div>
-            <div class="tags branch-list selector-box selector-dropdown">
+            <div class="tags branch-list selector-box">
               <button
                 v-for="b in displaySourceBranches"
                 :key="b"
@@ -277,7 +277,7 @@ onMounted(() => {
             <div class="row">
               <input v-model="merge.targetFilter" class="input" placeholder="过滤目标分支..." />
             </div>
-            <div class="tags branch-list selector-box selector-dropdown">
+            <div class="tags branch-list selector-box">
               <template v-for="(row, idx) in displayTargetRows" :key="row.type === 'separator' ? `sep-${idx}` : row.name">
                 <div v-if="row.type === 'separator'" class="branch-sep" />
                 <button
@@ -391,8 +391,8 @@ onMounted(() => {
 }
 
 .container {
-  width: 1260px;
-  min-width: 1260px;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   max-width: none;
   padding: 16px;
@@ -401,7 +401,7 @@ onMounted(() => {
   gap: 16px;
   box-sizing: border-box;
   overflow: hidden;
-  margin: 0 auto;
+  margin: 0;
 }
 
 .sep {
@@ -438,6 +438,7 @@ onMounted(() => {
   align-items: stretch;
   min-height: 0;
   justify-content: space-between;
+  flex: 1 1 auto;
 }
 
 .col {
@@ -447,12 +448,12 @@ onMounted(() => {
 }
 
 .project-col {
-  width: 400px;
+  width: 280px;
 }
 
 .branch-col {
-  width: 400px;
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-width: 380px;
 }
 
 .row {
@@ -570,15 +571,6 @@ onMounted(() => {
   box-sizing: border-box;
   scrollbar-gutter: stable;
   padding: 8px;
-}
-
-.selector-dropdown {
-  height: 0;
-  flex: 0 0 auto;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
 }
 
 .selector-empty {
