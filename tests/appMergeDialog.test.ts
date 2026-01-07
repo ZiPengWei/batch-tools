@@ -124,7 +124,8 @@ describe("App 合并弹窗日志", () => {
     ).toBe(true);
     expect(logEl.scrollTop).toBe(123);
 
-    if (resolveMergeRun) resolveMergeRun({ ok: true, mergedCount: 0, noopCount: 0 });
+    if (resolveMergeRun)
+      (resolveMergeRun as any)({ ok: true, mergedCount: 0, noopCount: 0 });
     await nextTick();
 
     wrapper.unmount();

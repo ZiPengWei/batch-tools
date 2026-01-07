@@ -110,7 +110,7 @@ ipcMain.handle(
 
 function createWindow() {
   const workArea = screen.getPrimaryDisplay().workAreaSize;
-  const desiredWidth = 1200;
+  const desiredWidth = 1430;
   const desiredHeight = 980;
   const width = Math.min(desiredWidth, workArea.width);
   const height = Math.min(desiredHeight, workArea.height);
@@ -119,7 +119,7 @@ function createWindow() {
     icon: path.join(process.env.VITE_PUBLIC, "icon.png"),
     width,
     height,
-    minWidth: 900,
+    minWidth: 1430,
     minHeight: 680,
     maxWidth: 1600,
     maxHeight: 1200,

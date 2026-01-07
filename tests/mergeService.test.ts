@@ -1,116 +1,202 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from "vitest";
 
-import { MergeService } from '../src/main/services/mergeService'
+import { MergeService } from "../src/main/services/mergeService";
 
 function createClientMock() {
   return {
     createMergeRequest: vi.fn(),
     deleteMergeRequest: vi.fn().mockResolvedValue(true),
     getMergeRequestConflicts: vi.fn().mockResolvedValue([]),
+    getMergeRequestChanges: vi
+      .fn()
+      .mockResolvedValue({ changes: [{ path: "x" }] }),
+    getMergeRequest: vi.fn(),
     acceptMergeRequest: vi.fn().mockResolvedValue({}),
     updateMergeRequest: vi.fn().mockResolvedValue({}),
-  } as const
+  } as const;
 }
 
-describe('MergeService.runAtomicBatchMerge', () => {
-  it('opts.onLog 会收到进度日志', async () => {
-    const client = createClientMock()
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 1 })
-    const service = new MergeService(client as any)
-    vi.spyOn(service, 'waitUntilMergeable').mockResolvedValueOnce({ ok: true, details: { iid: 1 } } as any)
-    vi.spyOn(service, 'waitUntilMerged').mockResolvedValueOnce({ ok: true, details: { iid: 1 } } as any)
+describe("MergeService.runAtomicBatchMerge", () => {
+  it("opts.onLog 会收到进度日志", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createMergeRequest.mockResolvedValueOnce({ iid: 1 });
+    const service = new MergeService(client as any);
+    client.getMergeRequest
+      .mockResolvedValueOnce({
+        iid: 1,
+        merge_status: "can_be_merged",
+        detailed_merge_status: null,
+        has_conflicts: false,
+        state: "opened",
+        changes_count: "1",
+      })
+      .mockResolvedValueOnce({
+        iid: 1,
+        state: "merged",
+      });
 
-    const onLog = vi.fn()
-    await service.runAtomicBatchMerge(1, [{ source: 'feat', target: 'main' }], { onLog })
+    const onLog = vi.fn();
+    const p = service.runAtomicBatchMerge(
+      1,
+      [{ source: "feat", target: "main" }],
+      { onLog }
+    );
+    await vi.runAllTimersAsync();
+    await p;
+    vi.useRealTimers();
 
-    expect(onLog).toHaveBeenCalled()
-    const texts = onLog.mock.calls.map((c) => c[0])
-    expect(texts.some((t) => String(t).includes('正在创建 MR'))).toBe(true)
-    expect(texts.some((t) => String(t).includes('=== 阶段 2'))).toBe(true)
-    expect(texts.some((t) => String(t).includes('=== 阶段 3'))).toBe(true)
-  })
+    expect(onLog).toHaveBeenCalled();
+    const texts = onLog.mock.calls.map((c) => c[0]);
+    expect(texts.some((t) => String(t).includes("正在创建 MR"))).toBe(true);
+    expect(texts.some((t) => String(t).includes("=== 阶段 2"))).toBe(true);
+    expect(texts.some((t) => String(t).includes("=== 阶段 3"))).toBe(true);
+  });
 
-  it('source==target 时返回 noop 且不创建 MR', async () => {
-    const client = createClientMock()
-    const service = new MergeService(client as any)
-
-    const res = await service.runAtomicBatchMerge(1, [{ source: 'a', target: 'a' }])
-
-    expect(client.createMergeRequest).not.toHaveBeenCalled()
-    expect(res.ok).toBe(true)
-    if (!res.ok) throw new Error('unreachable')
-    expect(res.mergedIids).toEqual([])
-    expect(res.noop).toEqual([{ type: 'noop', source: 'a', target: 'a', reason: 'source == target' }])
-  })
-
-  it('检测到无变更时删除 MR 并跳过后续合并', async () => {
-    const client = createClientMock()
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 10 })
-
-    const service = new MergeService(client as any)
-    vi.spyOn(service, 'waitUntilMergeable').mockResolvedValueOnce({
-      ok: false,
-      reason: '__noop_no_changes__',
-      details: { iid: 10 },
-    } as any)
-
-    const res = await service.runAtomicBatchMerge(1, [{ source: 'feat', target: 'main' }])
-
-    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 10)
-    expect(client.acceptMergeRequest).not.toHaveBeenCalled()
-    expect(res.ok).toBe(true)
-    if (!res.ok) throw new Error('unreachable')
-    expect(res.mergedIids).toEqual([])
-    expect(res.noop).toEqual([{ type: 'noop', source: 'feat', target: 'main', reason: '无变更', mrIid: 10 }])
-  })
-
-  it('阶段 2 出现冲突时触发回滚并删除已创建 MR', async () => {
-    const client = createClientMock()
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 1 }).mockResolvedValueOnce({ iid: 2 })
-    client.getMergeRequestConflicts.mockResolvedValueOnce([{ file: 'a.txt' }])
-
-    const service = new MergeService(client as any)
-    vi.spyOn(service, 'waitUntilMergeable')
-      .mockResolvedValueOnce({ ok: true, details: { iid: 1 } } as any)
-      .mockResolvedValueOnce({ ok: false, reason: '检测到冲突（不可合并）', details: { iid: 2, web_url: 'u' } } as any)
+  it("source==target 时返回 noop 且不创建 MR", async () => {
+    const client = createClientMock();
+    const service = new MergeService(client as any);
 
     const res = await service.runAtomicBatchMerge(1, [
-      { source: 'a', target: 'main' },
-      { source: 'b', target: 'main' },
-    ])
+      { source: "a", target: "a" },
+    ]);
 
-    expect(res.ok).toBe(false)
-    if (res.ok) throw new Error('unreachable')
-    expect(res.rolledBack).toBe(true)
+    expect(client.createMergeRequest).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.mergedIids).toEqual([]);
+    expect(res.noop).toEqual([
+      { type: "noop", source: "a", target: "a", reason: "source == target" },
+    ]);
+  });
+
+  it("检测到无变更时删除 MR 并跳过后续合并", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createMergeRequest.mockResolvedValueOnce({ iid: 10 });
+
+    const service = new MergeService(client as any);
+    client.getMergeRequest.mockResolvedValueOnce({
+      iid: 10,
+      merge_status: "can_be_merged",
+      detailed_merge_status: "nothing_to_merge",
+      has_conflicts: false,
+      state: "opened",
+      changes_count: "0",
+    });
+    client.getMergeRequestChanges.mockResolvedValueOnce({ changes: [] });
+
+    const p = service.runAtomicBatchMerge(1, [
+      { source: "feat", target: "main" },
+    ]);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 10);
+    expect(client.acceptMergeRequest).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.mergedIids).toEqual([]);
+    expect(res.noop).toEqual([
+      {
+        type: "noop",
+        source: "feat",
+        target: "main",
+        reason: "无变更",
+        mrIid: 10,
+      },
+    ]);
+  });
+
+  it("阶段 2 出现冲突时触发回滚并删除已创建 MR", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createMergeRequest
+      .mockResolvedValueOnce({ iid: 1 })
+      .mockResolvedValueOnce({ iid: 2 });
+    client.getMergeRequestConflicts.mockResolvedValueOnce([{ file: "a.txt" }]);
+
+    const service = new MergeService(client as any);
+    client.getMergeRequest
+      .mockResolvedValueOnce({
+        iid: 1,
+        merge_status: "can_be_merged",
+        detailed_merge_status: null,
+        has_conflicts: false,
+        state: "opened",
+        changes_count: "1",
+      })
+      .mockResolvedValueOnce({
+        iid: 2,
+        merge_status: "cannot_be_merged",
+        detailed_merge_status: "conflicts",
+        has_conflicts: true,
+        state: "opened",
+        changes_count: "1",
+        web_url: "u",
+      });
+    client.getMergeRequestChanges.mockResolvedValueOnce({
+      changes: [{ path: "x" }],
+    });
+
+    const p = service.runAtomicBatchMerge(1, [
+      { source: "a", target: "main" },
+      { source: "b", target: "main" },
+    ]);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.rolledBack).toBe(true);
     expect(res.conflicts).toEqual([
       {
-        type: 'conflict',
-        source: 'b',
-        target: 'main',
-        reason: '检测到冲突（不可合并）',
+        type: "conflict",
+        source: "b",
+        target: "main",
+        reason: "检测到冲突（不可合并）",
         mrIid: 2,
-        mrWebUrl: 'u',
-        conflicts: [{ file: 'a.txt' }],
+        mrWebUrl: "u",
+        conflicts: [{ file: "a.txt" }],
       },
-    ])
-    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 1)
-    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 2)
-  })
+    ]);
+    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 1);
+    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 2);
+  });
 
-  it('阶段 3 合并未完成时不回滚但会关闭 MR 并返回失败', async () => {
-    const client = createClientMock()
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 3 })
+  it("阶段 3 合并未完成时不回滚但会关闭 MR 并返回失败", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createMergeRequest.mockResolvedValueOnce({ iid: 3 });
 
-    const service = new MergeService(client as any)
-    vi.spyOn(service, 'waitUntilMergeable').mockResolvedValueOnce({ ok: true, details: { iid: 3 } } as any)
-    vi.spyOn(service, 'waitUntilMerged').mockResolvedValueOnce({ ok: false, reason: 'MR 已被关闭', details: { iid: 3 } } as any)
+    const service = new MergeService(client as any);
+    client.getMergeRequest
+      .mockResolvedValueOnce({
+        iid: 3,
+        merge_status: "can_be_merged",
+        detailed_merge_status: null,
+        has_conflicts: false,
+        state: "opened",
+        changes_count: "1",
+      })
+      .mockResolvedValueOnce({
+        iid: 3,
+        state: "closed",
+      });
 
-    const res = await service.runAtomicBatchMerge(1, [{ source: 'feat', target: 'main' }])
+    const p = service.runAtomicBatchMerge(1, [
+      { source: "feat", target: "main" },
+    ]);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
 
-    expect(res.ok).toBe(false)
-    if (res.ok) throw new Error('unreachable')
-    expect(res.rolledBack).toBe(false)
-    expect(client.updateMergeRequest).toHaveBeenCalledWith(1, 3, 'close')
-    expect(res.conflicts[0]).toMatchObject({ mrIid: 3 })
-  })
-})
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.rolledBack).toBe(false);
+    expect(client.updateMergeRequest).toHaveBeenCalledWith(1, 3, "close");
+    expect(res.conflicts[0]).toMatchObject({ mrIid: 3 });
+  });
+});

@@ -426,7 +426,7 @@ onMounted(() => {
 }
 
 .project-col {
-  flex: 0 0 80px;
+  width: 250px;
 }
 
 .branch-col {
