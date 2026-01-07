@@ -201,7 +201,7 @@ onMounted(() => {
 
             <div class="list selector-box">
               <button
-                v-for="p in projects.pagedItems"
+                v-for="p in projects.filteredItems"
                 :key="p.id"
                 class="list-item"
                 :class="{ active: p.id === projects.selectedProjectId }"
@@ -213,14 +213,6 @@ onMounted(() => {
               <div v-if="projects.loading" class="muted small">加载中...</div>
               <div v-else-if="projects.error" class="err small">{{ projects.error }}</div>
               <div v-else-if="!projects.items.length" class="selector-empty">暂无数据</div>
-            </div>
-
-            <div class="row paging">
-              <button class="btn ghost" :disabled="projects.page <= 1" @click="projects.prevPage()">上一页</button>
-              <button class="btn ghost" :disabled="projects.page >= projects.totalPages" @click="projects.nextPage()">
-                下一页
-              </button>
-              <div class="muted small">第 {{ projects.page }}/{{ projects.totalPages }} 页</div>
             </div>
 
             <div class="muted small">已选: {{ projects.selectedProjectName || '(无)' }}</div>
@@ -259,6 +251,7 @@ onMounted(() => {
                 暂无数据
               </div>
             </div>
+            <div class="muted small">共 {{ displaySourceBranches.length }} 个分支</div>
           </div>
 
           <div class="card col branch-col">
@@ -306,6 +299,7 @@ onMounted(() => {
               </div>
               <div v-else-if="!projects.selectedProjectId || !merge.targets.length" class="selector-empty">暂无数据</div>
             </div>
+            <div class="muted small">共 {{ displayTargetRows.filter((r) => r.type === 'branch').length }} 个分支</div>
           </div>
         </div>
 
