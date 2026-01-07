@@ -81,6 +81,18 @@ vi.mock("../src/renderer/store/merge", () => {
 });
 
 describe("App 合并弹窗日志", () => {
+  it("源分支与目标分支列表使用下拉滚动容器样式", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const App = (await import("../src/App.vue")).default;
+
+    const wrapper = mount(App, { attachTo: document.body });
+
+    const dropdowns = wrapper.findAll(".selector-box.selector-dropdown");
+    expect(dropdowns.length).toBe(2);
+
+    wrapper.unmount();
+  });
+
   it("合并中弹窗会渲染日志，并自动滚动到底部", async () => {
     resolveMergeRun = null;
     mergeStoreMock.logLines.splice(0);

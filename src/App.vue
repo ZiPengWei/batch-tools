@@ -201,7 +201,7 @@ onMounted(() => {
               />
             </div>
 
-            <div class="list">
+            <div class="list selector-box">
               <button
                 v-for="p in projects.pagedItems"
                 :key="p.id"
@@ -214,7 +214,7 @@ onMounted(() => {
               </button>
               <div v-if="projects.loading" class="muted small">加载中...</div>
               <div v-else-if="projects.error" class="err small">{{ projects.error }}</div>
-              <div v-else-if="!projects.items.length" class="muted small">{{ canUseContent ? '无数据' : '请先连接 GitLab' }}</div>
+              <div v-else-if="!projects.items.length" class="selector-empty">暂无数据</div>
             </div>
 
             <div class="row paging">
@@ -243,7 +243,7 @@ onMounted(() => {
                 :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
               />
             </div>
-            <div class="tags branch-list">
+            <div class="tags branch-list selector-box selector-dropdown">
               <button
                 v-for="b in displaySourceBranches"
                 :key="b"
@@ -253,12 +253,13 @@ onMounted(() => {
                 :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
                 @click="projects.selectedSourceBranch = projects.selectedSourceBranch === b ? '' : b"
               >
-                {{ b }}
+                <span class="branch-name">{{ b }}</span>
               </button>
               <div v-if="projects.sourceBranchesLoading" class="muted small">加载中...</div>
               <div v-else-if="projects.sourceBranchesError" class="err small">{{ projects.sourceBranchesError }}</div>
-              <div v-else-if="projects.selectedProjectId && !projects.sourceBranches.length" class="muted small">无数据</div>
-              <div v-else-if="!projects.selectedProjectId" class="muted small">请选择项目</div>
+              <div v-else-if="!projects.selectedProjectId || !displaySourceBranches.length" class="selector-empty">
+                暂无数据
+              </div>
             </div>
           </div>
 
@@ -276,7 +277,7 @@ onMounted(() => {
             <div class="row">
               <input v-model="merge.targetFilter" class="input" placeholder="过滤目标分支..." />
             </div>
-            <div class="tags branch-list">
+            <div class="tags branch-list selector-box selector-dropdown">
               <template v-for="(row, idx) in displayTargetRows" :key="row.type === 'separator' ? `sep-${idx}` : row.name">
                 <div v-if="row.type === 'separator'" class="branch-sep" />
                 <button
@@ -305,8 +306,7 @@ onMounted(() => {
               >
                 无匹配
               </div>
-              <div v-else-if="projects.selectedProjectId && !merge.targets.length" class="muted small">无数据</div>
-              <div v-else-if="!projects.selectedProjectId" class="muted small">请选择项目</div>
+              <div v-else-if="!projects.selectedProjectId || !merge.targets.length" class="selector-empty">暂无数据</div>
             </div>
           </div>
         </div>
@@ -385,15 +385,23 @@ onMounted(() => {
 .page {
   background: #f5f5f5;
   color: #222;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
 }
 
 .container {
-  width: fit-content;
-  max-width: min(1200px, calc(100vw - 32px));
+  width: 1260px;
+  min-width: 1260px;
+  height: 100%;
+  max-width: none;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 0 auto;
 }
 
 .sep {
@@ -404,6 +412,11 @@ onMounted(() => {
 .content.disabled {
   opacity: 0.55;
   pointer-events: none;
+}
+
+.content {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .card {
@@ -420,30 +433,26 @@ onMounted(() => {
 
 .columns {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  flex-wrap: nowrap;
+  gap: 10px;
   align-items: stretch;
+  min-height: 0;
+  justify-content: space-between;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .project-col {
-  width: 250px;
+  width: 400px;
 }
 
 .branch-col {
-  flex: 1 1 0;
-  min-width: 320px;
-}
-
-@media (max-width: 980px) {
-  .container {
-    width: 100%;
-  }
-
-  .project-col,
-  .branch-col {
-    flex: 1 1 100%;
-    min-width: 0;
-  }
+  width: 400px;
+  flex: 0 0 auto;
 }
 
 .row {
@@ -546,11 +555,40 @@ onMounted(() => {
 }
 
 .list {
-  border: 1px solid #e6e6e6;
-  border-radius: 10px;
+  padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.selector-box {
+  height: 350px;
+  min-height: 350px;
+  overflow-y: auto;
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  background: #ffffff;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
   padding: 8px;
-  height: 370px;
-  overflow: auto;
+}
+
+.selector-dropdown {
+  height: 0;
+  flex: 0 0 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.selector-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 14px;
+  text-align: center;
 }
 
 .list-item {
@@ -561,15 +599,16 @@ onMounted(() => {
   padding: 8px 10px;
   background: transparent;
   cursor: pointer;
-  transition: background-color 120ms ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .list-item:hover {
-  background: #f5f5f5;
+  background: #f6f8fa;
 }
 
 .list-item.active {
-  background: rgba(24, 144, 255, 0.12);
+  background: #0366d6;
+  color: #ffffff;
 }
 
 .list-item:disabled {
@@ -586,9 +625,14 @@ onMounted(() => {
   flex-wrap: nowrap;
   flex-direction: column;
   gap: 8px;
-  height: 470px;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   align-content: normal;
+}
+
+.tags.selector-box {
+  overflow-y: auto;
 }
 
 .branch-list > .muted,
@@ -602,19 +646,21 @@ onMounted(() => {
   padding: 5px 12px;
   background: #fff;
   cursor: pointer;
-  transition: transform 120ms ease, background-color 120ms ease;
+  transition: transform 120ms ease, background-color 0.2s ease, color 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  min-width: 0;
 }
 
 .tag:hover {
-  background: #f7fbff;
+  background: #f6f8fa;
 }
 
 .tag.active {
-  border-color: #1890ff;
-  background: rgba(24, 144, 255, 0.12);
+  border-color: #0366d6;
+  background: #0366d6;
+  color: #ffffff;
 }
 
 .tag.core {
@@ -623,8 +669,9 @@ onMounted(() => {
 }
 
 .tag.core.active {
-  border-color: #1890ff;
-  background: rgba(24, 144, 255, 0.12);
+  border-color: #0366d6;
+  background: #0366d6;
+  color: #ffffff;
   box-shadow: 0 0 0 2px rgba(255, 214, 102, 0.35) inset;
 }
 
@@ -638,6 +685,7 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .branch-sep {
