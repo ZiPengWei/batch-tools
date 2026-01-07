@@ -153,7 +153,7 @@ onMounted(() => {
 <template>
   <div class="page">
     <div class="container">
-      <div class="card">
+      <div class="card auth-card">
         <div class="card-title">GitLab 认证</div>
         <div class="row">
           <div class="label">GitLab URL:</div>
@@ -179,8 +179,6 @@ onMounted(() => {
         <div v-if="auth.connected && projects.loading" class="muted small">正在刷新项目列表...</div>
         <div v-if="auth.error" class="status err">{{ auth.error }}</div>
       </div>
-
-      <div class="sep" />
 
       <div class="content" :class="{ disabled: !canUseContent }">
         <div class="columns">
@@ -387,7 +385,6 @@ onMounted(() => {
   color: #222;
   width: 100%;
   height: 100%;
-  overflow-x: auto;
 }
 
 .container {
@@ -400,13 +397,8 @@ onMounted(() => {
   flex-direction: column;
   gap: 16px;
   box-sizing: border-box;
-  overflow: hidden;
   margin: 0;
-}
-
-.sep {
-  height: 1px;
-  background: #d9d9d9;
+  overflow: hidden;
 }
 
 .content.disabled {
@@ -417,6 +409,8 @@ onMounted(() => {
 .content {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .card {
@@ -424,11 +418,19 @@ onMounted(() => {
   border: 1px solid #d9d9d9;
   border-radius: 10px;
   padding: 14px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.auth-card {
+  flex: 0 0 auto;
 }
 
 .card-title {
   font-weight: 700;
   margin-bottom: 10px;
+  flex: 0 0 auto;
 }
 
 .columns {
@@ -441,19 +443,31 @@ onMounted(() => {
   flex: 1 1 auto;
 }
 
-.col {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+@media (max-width: 768px) {
+  .columns {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  
+  .project-col {
+    width: 100% !important;
+    min-height: 200px;
+    flex: 1 1 0;
+  }
+  
+  .branch-col {
+    min-height: 200px;
+    flex: 1 1 0;
+  }
 }
 
 .project-col {
-  width: 280px;
+  width: 200px;
 }
 
 .branch-col {
   flex: 1 1 0;
-  min-width: 380px;
+  min-width: 100px;
 }
 
 .row {
@@ -462,6 +476,7 @@ onMounted(() => {
   gap: 8px;
   margin-bottom: 10px;
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 
 .row.space-between {
@@ -480,7 +495,7 @@ onMounted(() => {
 
 .input {
   flex: 1;
-  min-width: 220px;
+  width: 100%;
   border: 1px solid #cfcfcf;
   border-radius: 8px;
   padding: 8px 10px;
@@ -557,13 +572,11 @@ onMounted(() => {
 
 .list {
   padding: 0;
-  flex: 1 1 auto;
-  min-height: 0;
 }
 
 .selector-box {
-  height: 350px;
-  min-height: 350px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid #e1e4e8;
   border-radius: 4px;
@@ -592,6 +605,8 @@ onMounted(() => {
   background: transparent;
   cursor: pointer;
   transition: background-color 0.2s ease, color 0.2s ease;
+  line-height: 1.4;
+  margin-bottom: 2px;
 }
 
 .list-item:hover {
@@ -617,14 +632,7 @@ onMounted(() => {
   flex-wrap: nowrap;
   flex-direction: column;
   gap: 8px;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
   align-content: normal;
-}
-
-.tags.selector-box {
-  overflow-y: auto;
 }
 
 .branch-list > .muted,
@@ -643,6 +651,8 @@ onMounted(() => {
   align-items: center;
   justify-content: flex-start;
   min-width: 0;
+  min-height: 32px;
+  box-sizing: border-box;
 }
 
 .tag:hover {

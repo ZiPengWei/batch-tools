@@ -192,15 +192,49 @@ export class GitLabClient {
     projectId: number,
     search?: string
   ): Promise<GitLabBranch[]> {
-    const params: Record<string, unknown> = { per_page: 100 };
-    if (search) params.search = search;
-    const res = await requestWithRetry(() =>
-      this.http.get<GitLabBranch[]>(
-        `/api/v4/projects/${projectId}/repository/branches`,
-        { params }
-      )
-    );
-    return res.data;
+    const branches: GitLabBranch[] = [];
+    let page = 1;
+    const perPage = 100;
+
+    while (true) {
+      const params: Record<string, unknown> = { per_page: perPage, page };
+      if (search) params.search = search;
+
+      try {
+        const res = await requestWithRetry(() =>
+          this.http.get<GitLabBranch[]>(
+            `/api/v4/projects/${projectId}/repository/branches`,
+            { params }
+          )
+        );
+        const data = res.data || [];
+        if (!data.length) break;
+        branches.push(...data);
+
+        const next = String((res.headers as any)?.["x-next-page"] ?? "").trim();
+        if (next) {
+          const nextNum = Number(next);
+          if (Number.isFinite(nextNum) && nextNum > page) page = nextNum;
+          else page += 1;
+        } else {
+          if (data.length < perPage) break;
+          page += 1;
+        }
+
+        if (page > 100) break;
+      } catch (e) {
+        if (branches.length) break;
+        throw e;
+      }
+    }
+
+    const uniqueByName = new Map<string, GitLabBranch>();
+    for (const b of branches) {
+      const name = b?.name;
+      if (!name) continue;
+      if (!uniqueByName.has(name)) uniqueByName.set(name, b);
+    }
+    return Array.from(uniqueByName.values());
   }
 
   async getMergeRequest(
