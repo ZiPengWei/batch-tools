@@ -276,7 +276,7 @@
               <span class="confirm-path">{{ f.new_path }}</span>
               <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-                }}</span>
+              }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
@@ -291,7 +291,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onUnmounted, onMounted } from 'vue';
+import { ref, shallowRef, computed, watch, onUnmounted, onMounted, toRaw } from 'vue';
 import { getFileContent, createCommit, resolveConflict, openExternal, getMergeBase, getMergeRequestChanges, getMergeRequestConflicts, getMergeRequest, localGitPrepareConflicts, localGitGetFileContents, localGitMergeFileContents, localGitCleanup } from '../ipc/bridge';
 import { parseGitConflictMarkers } from '../utils/conflictMarkers';
 
@@ -2137,6 +2137,39 @@ function insertRemoteLineToResult() {
   insertLineFromPanel('right');
 }
 
+function normalizeCommitActions(list: any[]) {
+  const rawList = Array.isArray(list) ? (toRaw(list) as any[]) : [];
+  const out: any[] = [];
+  for (let i = 0; i < rawList.length; i++) {
+    const a = toRaw(rawList[i]) as any;
+    const action = a?.action;
+    const filePath = a?.file_path;
+    const content = a?.content;
+    if (typeof action !== 'string' || !action.trim()) {
+      throw new Error(`提交数据第 ${i + 1} 项 action 非字符串或为空`);
+    }
+    if (typeof filePath !== 'string' || !filePath.trim()) {
+      throw new Error(`提交数据第 ${i + 1} 项 file_path 非字符串或为空`);
+    }
+    if (content != null && typeof content !== 'string') {
+      throw new Error(`提交数据第 ${i + 1} 项 content 不是字符串（当前类型: ${typeof content}）`);
+    }
+    out.push(content == null ? { action, file_path: filePath } : { action, file_path: filePath, content });
+  }
+  return out;
+}
+
+function ensureCloneableForIpc(value: any, label: string) {
+  const sc = (globalThis as any).structuredClone;
+  if (typeof sc !== 'function') return;
+  try {
+    sc(value);
+  } catch (e) {
+    console.error(`${label} 无法通过 structured clone（可能包含 Proxy/函数/循环引用等）`, e);
+    throw e;
+  }
+}
+
 async function confirmResolvedExternally() {
   try {
     if (localGitEnabled.value) await localGitCleanup({ runId: runId.value });
@@ -2187,7 +2220,9 @@ async function markResolved() {
       finalConfirmVisible.value = true;
     }
   } catch (e) {
-    alert('提交失败: ' + e);
+    console.error('提交失败，错误堆栈：', e);
+    const msg = e instanceof Error ? (e.stack || e.message) : String(e);
+    alert('提交失败: ' + msg);
   } finally {
     loading.value = false;
   }
@@ -2208,11 +2243,13 @@ async function confirmAndCommit() {
   if (!canFinish.value) return;
   try {
     loading.value = true;
+    const actions = normalizeCommitActions(pendingActions.value);
+    ensureCloneableForIpc(actions, '提交 actions');
     await createCommit({
       projectId: projectId.value,
       branch: source.value,
       message: `Merge conflict resolution for ${source.value} -> ${target.value} (MR !${props.conflictData?.mrIid || ''})`,
-      actions: pendingActions.value
+      actions
     });
     try {
       if (localGitEnabled.value) await localGitCleanup({ runId: runId.value });
@@ -2224,7 +2261,9 @@ async function confirmAndCommit() {
     emit('resolved');
     emit('close');
   } catch (e) {
-    alert('提交失败: ' + e);
+    console.error('提交失败，错误堆栈：', e);
+    const msg = e instanceof Error ? (e.stack || e.message) : String(e);
+    alert('提交失败: ' + msg);
   } finally {
     loading.value = false;
     finalConfirmVisible.value = false;

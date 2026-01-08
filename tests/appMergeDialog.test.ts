@@ -256,7 +256,7 @@ const mergeStoreMock = reactive({
   setTargets: vi.fn(),
   toggleTarget: vi.fn(),
   log: vi.fn(function (this: any, text: string, error = false) {
-    mergeStoreMock.logLines.push({ text, error });
+    mergeStoreMock.logLines.push({ text: String(text ?? ""), error });
   }),
   run: vi.fn(async () => {
     return await new Promise((resolve) => {
@@ -320,6 +320,13 @@ describe("App 合并弹窗日志", () => {
     resolveMergeRun = null;
     mergeStoreMock.logLines.splice(0);
 
+    const originalIpc = (globalThis as any).window?.ipcRenderer;
+    (globalThis as any).window.ipcRenderer = {
+      on: vi.fn(),
+      off: vi.fn(),
+      invoke: vi.fn(),
+    };
+
     const { mount } = await import("@vue/test-utils");
     const { nextTick } = await import("vue");
     const App = (await import("../src/App.vue")).default;
@@ -340,6 +347,8 @@ describe("App 合并弹窗日志", () => {
 
     await nextTick();
 
+    expect(wrapper.text()).toContain("暂无日志输出");
+
     const logEl = wrapper.find(".modal .log").element as HTMLDivElement;
     Object.defineProperty(logEl, "scrollHeight", {
       configurable: true,
@@ -347,15 +356,15 @@ describe("App 合并弹窗日志", () => {
     });
     logEl.scrollTop = 0;
 
-    mergeStoreMock.logLines.push({ text: "L1" });
-    mergeStoreMock.logLines.push({ text: "L2", error: true });
+    mergeStoreMock.log("L1");
+    mergeStoreMock.log("L2", true);
     await nextTick();
     await nextTick();
 
     expect(wrapper.text()).toContain("L1");
     expect(wrapper.text()).toContain("L2");
     expect(
-      wrapper.findAll(".log-line.err").some((n: any) => n.text() === "L2")
+      wrapper.findAll(".log-line.err").some((n: any) => n.text().includes("L2"))
     ).toBe(true);
     expect(logEl.scrollTop).toBe(123);
 
@@ -364,6 +373,7 @@ describe("App 合并弹窗日志", () => {
     await nextTick();
 
     wrapper.unmount();
+    (globalThis as any).window.ipcRenderer = originalIpc;
   });
 
   it("收到冲突事件时会弹出冲突解决窗口", async () => {
@@ -483,6 +493,51 @@ describe("ConflictDialog 交互", () => {
     });
     expect(wrapper.emitted("close")).toBeTruthy();
     expect(wrapper.emitted("resolved")).toBeTruthy();
+
+    wrapper.unmount();
+  });
+
+  it("确认合并并提交会把暂存动作转为可克隆的纯对象", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick, reactive } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).createCommit.mockResolvedValueOnce({ ok: true });
+    (bridge as any).resolveConflict.mockResolvedValueOnce({ ok: true });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_commit_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    await nextTick();
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    setupState.pendingActions.value = [
+      reactive({ action: "update", file_path: "a.txt", content: "X" }),
+    ];
+
+    await setupState.confirmAndCommit();
+
+    expect((bridge as any).createCommit).toHaveBeenCalled();
+    const payload = ((bridge as any).createCommit as any).mock.calls[0][0];
+    if (typeof (globalThis as any).structuredClone === "function") {
+      expect(() =>
+        (globalThis as any).structuredClone(payload.actions)
+      ).not.toThrow();
+    }
 
     wrapper.unmount();
   });

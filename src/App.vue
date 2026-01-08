@@ -105,6 +105,18 @@ const conflictVisible = ref(false)
 const conflictData = ref<any>(null)
 const conflictMrWebUrl = computed(() => conflictData.value?.mrWebUrl || '')
 
+const ipcAvailable = computed(() => {
+  const ipc = (window as any)?.ipcRenderer
+  return Boolean(ipc?.on && ipc?.invoke)
+})
+
+const confirmLogHint = computed(() => {
+  if (!confirmRunning.value) return ''
+  if (merge.logLines.length) return ''
+  if (!ipcAvailable.value) return '无法接收日志：ipcRenderer 不可用，请确认在 Electron 环境运行。'
+  return '暂无日志输出，正在等待后台任务输出...'
+})
+
 function openConflictMr() {
   const url = conflictMrWebUrl.value
   if (!url) return
@@ -207,24 +219,14 @@ onMounted(() => {
               </button>
             </div>
             <div class="row">
-              <input
-                v-model="projects.filter"
-                class="input"
-                placeholder="过滤项目…"
-                :disabled="!canUseContent"
-                @input="projects.setFilter(projects.filter)"
-              />
+              <input v-model="projects.filter" class="input" placeholder="过滤项目…" :disabled="!canUseContent"
+                @input="projects.setFilter(projects.filter)" />
             </div>
 
             <div class="list selector-box">
-              <button
-                v-for="p in projects.filteredItems"
-                :key="p.id"
-                class="list-item"
-                :class="{ active: p.id === projects.selectedProjectId }"
-                :disabled="!canUseContent"
-                @click="projects.selectProject({ id: p.id, display: p.display })"
-              >
+              <button v-for="p in projects.filteredItems" :key="p.id" class="list-item"
+                :class="{ active: p.id === projects.selectedProjectId }" :disabled="!canUseContent"
+                @click="projects.selectProject({ id: p.id, display: p.display })">
                 {{ p.display }}
               </button>
               <div v-if="projects.loading" class="muted small">加载中...</div>
@@ -238,28 +240,20 @@ onMounted(() => {
           <div class="card col branch-col">
             <div class="row space-between">
               <div class="card-title">2. 选择源分支</div>
-              <button class="btn" :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading" @click="projects.loadAllBranches()">
+              <button class="btn" :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                @click="projects.loadAllBranches()">
                 {{ projects.sourceBranchesLoading ? '加载中...' : '刷新分支' }}
               </button>
             </div>
             <div class="row">
-              <input
-                v-model="sourceFilter"
-                class="input"
-                placeholder="过滤源分支..."
-                :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
-              />
+              <input v-model="sourceFilter" class="input" placeholder="过滤源分支..."
+                :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading" />
             </div>
             <div class="tags branch-list selector-box">
-              <button
-                v-for="b in displaySourceBranches"
-                :key="b"
-                :title="b"
-                class="tag"
+              <button v-for="b in displaySourceBranches" :key="b" :title="b" class="tag"
                 :class="{ active: b === projects.selectedSourceBranch }"
                 :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
-                @click="projects.selectedSourceBranch = projects.selectedSourceBranch === b ? '' : b"
-              >
+                @click="projects.selectedSourceBranch = projects.selectedSourceBranch === b ? '' : b">
                 <span class="branch-name">{{ b }}</span>
               </button>
               <div v-if="projects.sourceBranchesLoading" class="muted small">加载中...</div>
@@ -274,11 +268,9 @@ onMounted(() => {
           <div class="card col branch-col">
             <div class="row space-between">
               <div class="card-title">3. 选择目标分支</div>
-              <button
-                class="btn"
+              <button class="btn"
                 :disabled="merge.running || !projects.selectedProjectId || !projects.selectedSourceBranch || !merge.selectedTargets.length"
-                @click="onClickBatch"
-              >
+                @click="onClickBatch">
                 {{ merge.running ? '处理中...' : mergeButtonText }}
               </button>
             </div>
@@ -286,37 +278,30 @@ onMounted(() => {
               <input v-model="merge.targetFilter" class="input" placeholder="过滤目标分支..." />
             </div>
             <div class="tags branch-list selector-box">
-              <template v-for="(row, idx) in displayTargetRows" :key="row.type === 'separator' ? `sep-${idx}` : row.name">
+              <template v-for="(row, idx) in displayTargetRows"
+                :key="row.type === 'separator' ? `sep-${idx}` : row.name">
                 <div v-if="row.type === 'separator'" class="branch-sep" />
-                <button
-                  v-else
-                  class="tag"
+                <button v-else class="tag"
                   :class="{ active: merge.selectedTargets.includes(row.name), core: row.isCore }"
-                  :disabled="!projects.selectedProjectId"
-                  :title="row.name"
-                  @click="merge.toggleTarget(row.name)"
-                >
+                  :disabled="!projects.selectedProjectId" :title="row.name" @click="merge.toggleTarget(row.name)">
                   <span v-if="row.isCore" class="core-mark">★</span>
                   <span class="branch-name">{{ row.name }}</span>
                 </button>
               </template>
               <div v-if="projects.targetBranchesLoading" class="muted small">加载中...</div>
               <div v-else-if="projects.targetBranchesError" class="err small">{{ projects.targetBranchesError }}</div>
-              <div
-                v-else-if="
-                  projects.selectedProjectId &&
-                  merge.targets.length &&
-                  !displayTargetRows.length &&
-                  !projects.targetBranchesLoading &&
-                  !projects.targetBranchesError
-                "
-                class="muted small"
-              >
+              <div v-else-if="
+                projects.selectedProjectId &&
+                merge.targets.length &&
+                !displayTargetRows.length &&
+                !projects.targetBranchesLoading &&
+                !projects.targetBranchesError
+              " class="muted small">
                 无匹配
               </div>
               <div v-else-if="!projects.selectedProjectId || !merge.targets.length" class="selector-empty">暂无数据</div>
             </div>
-            <div class="muted small">共 {{ displayTargetRows.filter((r) => r.type === 'branch').length }} 个分支</div>
+            <div class="muted small">共 {{displayTargetRows.filter((r) => r.type === 'branch').length}} 个分支</div>
           </div>
         </div>
 
@@ -335,14 +320,15 @@ onMounted(() => {
           </div>
         </div>
         <div v-if="confirmRunning" class="dialog-text">
-          <div v-if="conflictVisible" class="small muted" style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
+          <div v-if="conflictVisible" class="small muted"
+            style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
             <span>冲突处理中：已弹出冲突解决窗口，请完成处理后继续。</span>
             <button v-if="conflictMrWebUrl" class="btn ghost" @click="openConflictMr">打开 MR</button>
           </div>
           <div class="muted small">操作日志</div>
           <div ref="confirmLogEl" class="log">
-            <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">
-              {{ l.text }}
+            <div v-if="confirmLogHint" class="log-line muted">{{ confirmLogHint }}</div>
+            <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">{{ l.text }}
             </div>
           </div>
         </div>
@@ -370,7 +356,8 @@ onMounted(() => {
               <div>本次无变更，已跳过: {{ finishSummary.noopCount }} 项</div>
             </template>
             <div v-else>成功 MR: 0 个</div>
-            <div v-if="finishSummary.mergedCount && finishSummary.noopCount">已跳过无变更: {{ finishSummary.noopCount }} 项</div>
+            <div v-if="finishSummary.mergedCount && finishSummary.noopCount">已跳过无变更: {{ finishSummary.noopCount }} 项
+            </div>
           </template>
           <template v-else>
             <div v-if="finishSummary">冲突/失败: {{ finishSummary.conflictsCount }} 项</div>
@@ -381,8 +368,7 @@ onMounted(() => {
         <div class="dialog-text">
           <div class="muted small">操作日志</div>
           <div class="log">
-            <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">
-              {{ l.text }}
+            <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">{{ l.text }}
             </div>
           </div>
         </div>
@@ -392,11 +378,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <ConflictDialog
-      :visible="conflictVisible"
-      :conflict-data="conflictData"
-      @close="conflictVisible = false"
-    />
+    <ConflictDialog :visible="conflictVisible" :conflict-data="conflictData" @close="conflictVisible = false" />
   </div>
 </template>
 
@@ -629,8 +611,8 @@ onMounted(() => {
   align-content: normal;
 }
 
-.branch-list > .muted,
-.branch-list > .err {
+.branch-list>.muted,
+.branch-list>.err {
   padding: 6px 0;
 }
 
@@ -754,6 +736,7 @@ onMounted(() => {
     transform: translateY(6px) scale(0.98);
     opacity: 0;
   }
+
   to {
     transform: translateY(0) scale(1);
     opacity: 1;

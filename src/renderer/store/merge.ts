@@ -14,12 +14,59 @@ export type MergeRunSummary =
       message?: string;
     };
 
+export type MergeLogLine = {
+  ts: number;
+  text: string;
+  error?: boolean;
+};
+
+export type MergeLogGroupItem = {
+  ts: number;
+  text: string;
+  error?: boolean;
+};
+
+export type MergeLogGroup = {
+  id: string;
+  key: string;
+  displayText: string;
+  count: number;
+  firstTs: number;
+  lastTs: number;
+  error?: boolean;
+  collapsed: boolean;
+  items: MergeLogGroupItem[];
+  dropped: number;
+};
+
+function normalizeLogText(text: string) {
+  return String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function smartGroupKey(
+  text: string
+): { key: string; displayText: string } | null {
+  const m1 = text.match(/^MR Ready:\s*IID\s*\d+$/i);
+  if (m1) return { key: "MR Ready: IID", displayText: "MR Ready: IID" };
+  return null;
+}
+
+const MAX_RAW_LOG_LINES = 20000;
+const MAX_GROUP_ITEMS = 5000;
+
 export const useMergeStore = defineStore("merge", {
   state: () => ({
     targetFilter: "",
     targets: [] as string[],
     selectedTargets: [] as string[],
-    logLines: [] as { text: string; error?: boolean }[],
+    logLines: [] as MergeLogLine[],
+    logGroups: [] as MergeLogGroup[],
+    logGroupIndex: {} as Record<string, number>,
+    logTick: 0,
     progressMax: 0,
     progressValue: 0,
     running: false,
@@ -31,7 +78,6 @@ export const useMergeStore = defineStore("merge", {
       this.selectedTargets = [];
       this.progressMax = 0;
       this.progressValue = 0;
-      this.logLines = [];
     },
     toggleTarget(name: string) {
       if (this.selectedTargets.includes(name)) {
@@ -41,7 +87,54 @@ export const useMergeStore = defineStore("merge", {
       }
     },
     log(text: string, error = false) {
-      this.logLines.push({ text, error });
+      const ts = Date.now();
+      const norm = normalizeLogText(text);
+      this.logTick += 1;
+      this.logLines.push({ ts, text: norm, error });
+      if (this.logLines.length > MAX_RAW_LOG_LINES) {
+        this.logLines.splice(0, this.logLines.length - MAX_RAW_LOG_LINES);
+      }
+
+      const smart = smartGroupKey(norm);
+      const key = smart ? `S:${smart.key}` : `E:${norm}`;
+      const displayText = smart ? smart.displayText : norm;
+      const idx = this.logGroupIndex[key];
+
+      if (idx == null) {
+        const id = `${ts}-${this.logTick}`;
+        this.logGroupIndex[key] = this.logGroups.length;
+        this.logGroups.push({
+          id,
+          key,
+          displayText,
+          count: 1,
+          firstTs: ts,
+          lastTs: ts,
+          error,
+          collapsed: true,
+          items: [{ ts, text: norm, error }],
+          dropped: 0,
+        });
+        return;
+      }
+
+      const g = this.logGroups[idx];
+      if (!g) return;
+      g.count += 1;
+      g.lastTs = ts;
+      g.error = Boolean(g.error) || Boolean(error);
+      g.items.push({ ts, text: norm, error });
+      if (g.items.length > MAX_GROUP_ITEMS) {
+        const drop = g.items.length - MAX_GROUP_ITEMS;
+        g.items.splice(0, drop);
+        g.dropped += drop;
+      }
+    },
+    toggleLogGroup(id: string) {
+      const idx = this.logGroups.findIndex((g) => g.id === id);
+      if (idx < 0) return;
+      this.logGroups[idx].collapsed = !this.logGroups[idx].collapsed;
+      this.logTick += 1;
     },
     async run(
       projectId: number,
@@ -54,6 +147,9 @@ export const useMergeStore = defineStore("merge", {
       this.progressValue = 0;
       this.running = true;
       this.logLines = [];
+      this.logGroups = [];
+      this.logGroupIndex = {};
+      this.logTick = 0;
       const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       this.activeRunId = runId;
       this.log("=== 开始批量合并 ===");
