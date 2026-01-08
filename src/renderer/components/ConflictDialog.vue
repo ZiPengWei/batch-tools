@@ -276,7 +276,7 @@
               <span class="confirm-path">{{ f.new_path }}</span>
               <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-              }}</span>
+                }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
@@ -2837,6 +2837,52 @@ onUnmounted(() => {
   border: 1px solid #e1e4e8;
   border-radius: 999px;
   padding: 2px 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 1260px) and (max-width: 1340px) {
+  .conflict-file-row {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    grid-template-areas:
+      "check main"
+      "check actions";
+    align-items: start;
+    column-gap: 8px;
+    row-gap: 6px;
+    padding: 8px 8px;
+  }
+
+  .conflict-file-check {
+    grid-area: check;
+    margin-top: 2px;
+  }
+
+  .conflict-file-open {
+    grid-area: main;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+  }
+
+  .conflict-file-path {
+    flex: 1 1 100%;
+  }
+
+  .conflict-file-actions {
+    grid-area: actions;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .btn.tiny {
+    padding: 4px 6px;
+  }
 }
 
 /* 响应式图片与通用修正 */
