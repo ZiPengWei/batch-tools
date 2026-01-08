@@ -464,24 +464,6 @@ onMounted(() => {
   flex: 1 1 auto;
 }
 
-@media (max-width: 768px) {
-  .columns {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-  
-  .project-col {
-    width: 100% !important;
-    min-height: 200px;
-    flex: 1 1 0;
-  }
-  
-  .branch-col {
-    min-height: 200px;
-    flex: 1 1 0;
-  }
-}
-
 .project-col {
   width: 200px;
 }
@@ -591,10 +573,6 @@ onMounted(() => {
   color: #d12a2a;
 }
 
-.list {
-  padding: 0;
-}
-
 .selector-box {
   flex: 1 1 auto;
   min-height: 0;
@@ -641,11 +619,6 @@ onMounted(() => {
 
 .list-item:disabled {
   cursor: not-allowed;
-}
-
-.paging {
-  margin-top: 10px;
-  justify-content: space-between;
 }
 
 .tags {

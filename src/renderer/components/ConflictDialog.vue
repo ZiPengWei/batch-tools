@@ -276,7 +276,7 @@
               <span class="confirm-path">{{ f.new_path }}</span>
               <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-                }}</span>
+              }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
@@ -2347,10 +2347,6 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-.sidebar-mask {
-  display: none;
-}
-
 .conflict-sidebar-header {
   padding: 10px 10px 8px 10px;
   border-bottom: 1px solid #e1e4e8;
@@ -3032,110 +3028,6 @@ object {
   margin-top: 6px;
   border-radius: 2px;
   background: #1890ff;
-}
-
-@media (max-width: 1080px) {
-  .conflict-body {
-    position: relative;
-  }
-
-  .sidebar-mask {
-    display: block;
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.35);
-    z-index: 4;
-  }
-
-  .conflict-sidebar.drawer {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    z-index: 5;
-    border-right: 1px solid #e1e4e8;
-    transform: translateX(-102%);
-    transition: transform 160ms ease-out;
-    width: min(340px, 84vw);
-    min-width: 240px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
-  }
-
-  .conflict-sidebar.drawer.open {
-    transform: translateX(0);
-  }
-
-  .merge-panes-header {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-}
-
-@media (max-width: 768px) {
-  .conflict-dialog {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    height: 100%;
-    border-radius: 0;
-    border: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .conflict-modal {
-    padding: 0;
-    align-items: flex-start;
-  }
-
-  .conflict-header {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .conflict-title {
-    font-size: 16px;
-    white-space: normal;
-    word-break: break-all;
-  }
-
-  .conflict-subtitle {
-    white-space: normal;
-    word-break: break-all;
-  }
-
-  .conflict-header-actions {
-    width: 100%;
-    justify-content: space-between;
-    margin-top: 4px;
-  }
-
-  .pane-wrap {
-    min-width: 0;
-    /* 允许在极小窗口下缩小 */
-  }
-
-  .conflict-footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-
-  .conflict-footer-actions {
-    justify-content: flex-start;
-    width: 100%;
-  }
-
-  .conflict-footer-actions .btn {
-    flex: 1 1 auto;
-    /* 让按钮在移动端自适应宽度，易于点击 */
-    text-align: center;
-    justify-content: center;
-  }
-
-  .conflict-footer-left {
-    flex: 0 0 auto;
-    width: 100%;
-  }
 }
 
 :deep(.conflict-line-local) {
