@@ -316,7 +316,7 @@ const rightEditor = shallowRef<any>();
 let activeMonaco: any = null;
 
 const viewportWidth = ref(0);
-const compactMode = computed(() => viewportWidth.value > 0 && viewportWidth.value <= 980);
+const compactMode = computed(() => viewportWidth.value > 0 && viewportWidth.value <= 1080);
 const visiblePane = ref<'left' | 'middle' | 'right'>('middle');
 const sidebarDrawerOpen = ref(false);
 
@@ -2737,6 +2737,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 10px;
   background: #ffffff;
+  flex-wrap: wrap;
 }
 
 .conflict-footer-left {
@@ -3033,7 +3034,7 @@ object {
   background: #1890ff;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1080px) {
   .conflict-body {
     position: relative;
   }
@@ -3066,36 +3067,6 @@ object {
 
   .merge-panes-header {
     grid-template-columns: 1fr 1fr 1fr;
-  }
-
-  .conflict-footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-
-  .conflict-footer-actions {
-    justify-content: flex-start;
-    width: 100%;
-  }
-
-  .conflict-footer-actions .btn {
-    flex: 1 1 auto;
-    /* 让按钮在移动端自适应宽度，易于点击 */
-    text-align: center;
-    justify-content: center;
-  }
-
-  .conflict-footer-left {
-    flex: 0 0 auto;
-    width: 100%;
-  }
-
-  .conflict-hint {
-    display: block;
-    white-space: normal;
-    word-break: break-all;
-    line-height: 1.4;
   }
 }
 
@@ -3141,6 +3112,29 @@ object {
   .pane-wrap {
     min-width: 0;
     /* 允许在极小窗口下缩小 */
+  }
+
+  .conflict-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .conflict-footer-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .conflict-footer-actions .btn {
+    flex: 1 1 auto;
+    /* 让按钮在移动端自适应宽度，易于点击 */
+    text-align: center;
+    justify-content: center;
+  }
+
+  .conflict-footer-left {
+    flex: 0 0 auto;
+    width: 100%;
   }
 }
 
