@@ -11,7 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@types/vscode": "^1.107.0",
     "axios": "^1.13.2",
+    "monaco-editor": "^0.55.1",
     "pinia": "^3.0.4",
     "vue": "^3.4.21"
   },

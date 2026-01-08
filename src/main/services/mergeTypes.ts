@@ -35,3 +35,16 @@ export type MergeResult =
       conflicts: MergeConflict[];
       noop: MergeNoop[];
     };
+
+export type ConflictResolution = {
+  resolved: boolean;
+  message?: string;
+};
+
+export type ConflictHandler = (data: {
+  projectId: number;
+  mrIid: number;
+  source: string;
+  target: string;
+  conflicts: any[];
+}) => Promise<ConflictResolution>;

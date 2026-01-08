@@ -1,19 +1,25 @@
 import type { GitLabClient } from "../gitlabClient";
 import type {
+  ConflictHandler,
   MergeConflict,
   MergeCreated,
   MergeNoop,
   MergePair,
   MergeResult,
 } from "../mergeTypes";
-import { rollback, waitUntilMergeable, waitUntilMerged, type LogFn } from "./shared";
+import {
+  rollback,
+  waitUntilMergeable,
+  waitUntilMerged,
+  type LogFn,
+} from "./shared";
 
 // merge 模式：保持现有行为（创建 MR -> 可合并检测 -> 接口触发合并 -> 等待合并完成）
 export async function runAtomicBatchMergeByMerge(
   client: GitLabClient,
   projectId: number,
   pairs: MergePair[],
-  opts?: { onLog?: LogFn }
+  opts?: { onLog?: LogFn; conflictHandler?: ConflictHandler }
 ): Promise<MergeResult> {
   const created: MergeCreated[] = [];
   const noop: MergeNoop[] = [];
@@ -89,6 +95,38 @@ export async function runAtomicBatchMergeByMerge(
     }
 
     const conflictList = await client.getMergeRequestConflicts(projectId, iid);
+
+    if (opts?.conflictHandler) {
+      log?.(
+        `检测到冲突: ${c.source} -> ${c.target} (MR !${iid})，等待用户解决...`
+      );
+      try {
+        const resolution = await opts.conflictHandler({
+          projectId,
+          mrIid: iid,
+          source: c.source,
+          target: c.target,
+          conflicts: conflictList,
+        });
+        if (resolution.resolved) {
+          log?.(`用户标记冲突已解决，重新检测可合并状态...`);
+          const recheck = await waitUntilMergeable(client, projectId, iid, {
+            onProgress: (m) => log?.(m),
+          });
+          if (recheck.ok) {
+            log?.(`冲突已解决且 MR 可合并: ${c.source} -> ${c.target}`);
+            continue;
+          } else {
+            log?.(`重新检测失败: ${recheck.reason}`, true);
+          }
+        } else {
+          log?.(`用户取消或未解决冲突`);
+        }
+      } catch (e) {
+        log?.(`冲突处理出错: ${e}`, true);
+      }
+    }
+
     conflicts.push({
       type: "conflict",
       source: c.source,
@@ -107,7 +145,12 @@ export async function runAtomicBatchMergeByMerge(
 
   log?.("=== 阶段 3：执行真实合并 ===");
   const mergedIids: number[] = [];
-  const failed: Array<{ iid: number; source: string; target: string; reason: string }> = [];
+  const failed: Array<{
+    iid: number;
+    source: string;
+    target: string;
+    reason: string;
+  }> = [];
 
   for (const c of created) {
     const iid = c.mr.iid;
@@ -122,14 +165,24 @@ export async function runAtomicBatchMergeByMerge(
         mergedIids.push(iid);
         log?.(`已合并: ${c.source} -> ${c.target} (MR !${iid})`);
       } else {
-        failed.push({ iid, source: c.source, target: c.target, reason: wait.reason });
+        failed.push({
+          iid,
+          source: c.source,
+          target: c.target,
+          reason: wait.reason,
+        });
         log?.(
           `合并未完成: ${c.source} -> ${c.target} (MR !${iid}) - ${wait.reason}`,
           true
         );
       }
     } catch (e) {
-      failed.push({ iid, source: c.source, target: c.target, reason: String(e) });
+      failed.push({
+        iid,
+        source: c.source,
+        target: c.target,
+        reason: String(e),
+      });
       log?.(
         `合并调用失败: ${c.source} -> ${c.target} (MR !${iid}) - ${String(e)}`,
         true

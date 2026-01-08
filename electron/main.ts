@@ -38,6 +38,9 @@ let win: BrowserWindow | null;
 const gitlab = new GitLabClient();
 const mergeService = new MergeService(gitlab);
 
+// Map to store conflict resolvers: runId -> resolveFunction
+const conflictResolvers = new Map<string, (res: any) => void>();
+
 ipcMain.handle(
   "gitlab:set-auth",
   async (
@@ -94,7 +97,13 @@ ipcMain.handle(
     event: IpcMainInvokeEvent,
     payload: BatchMergeRequest
   ): Promise<BatchMergeResponse> => {
-    const runId = payload.runId;
+    const runId = payload.runId || "unknown";
+
+    // Cleanup old resolvers
+    if (conflictResolvers.has(runId)) {
+      conflictResolvers.delete(runId);
+    }
+
     const res = await mergeService.runAtomicBatchMerge(
       payload.projectId,
       payload.pairs,
@@ -102,9 +111,71 @@ ipcMain.handle(
         onLog: (text, error) => {
           event.sender.send("gitlab:batch-merge-log", { runId, text, error });
         },
+        conflictHandler: async (conflictData) => {
+          // Send conflict event to renderer
+          event.sender.send("gitlab:merge-conflict", {
+            runId,
+            ...conflictData,
+          });
+
+          // Wait for resolution
+          return new Promise((resolve) => {
+            conflictResolvers.set(runId, resolve);
+          });
+        },
       }
     );
     return res;
+  }
+);
+
+ipcMain.handle(
+  "gitlab:resolve-conflict",
+  async (
+    _event: IpcMainInvokeEvent,
+    payload: { runId: string; resolution: any }
+  ) => {
+    const resolve = conflictResolvers.get(payload.runId);
+    if (resolve) {
+      resolve(payload.resolution);
+      conflictResolvers.delete(payload.runId);
+      return { ok: true };
+    }
+    return { ok: false, error: "No active conflict resolution found" };
+  }
+);
+
+ipcMain.handle(
+  "gitlab:get-file-content",
+  async (
+    _event,
+    payload: { projectId: number; filePath: string; ref: string }
+  ) => {
+    return await gitlab.getFileContent(
+      payload.projectId,
+      payload.filePath,
+      payload.ref
+    );
+  }
+);
+
+ipcMain.handle(
+  "gitlab:create-commit",
+  async (
+    _event,
+    payload: {
+      projectId: number;
+      branch: string;
+      message: string;
+      actions: any[];
+    }
+  ) => {
+    return await gitlab.createCommit(
+      payload.projectId,
+      payload.branch,
+      payload.message,
+      payload.actions
+    );
   }
 );
 

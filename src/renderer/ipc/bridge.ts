@@ -50,3 +50,27 @@ export function onBatchMergeLog(callback: (e: BatchMergeLogEvent) => void) {
     ipc.off("gitlab:batch-merge-log", handler);
   };
 }
+
+export function onMergeConflict(callback: (payload: any) => void) {
+  const ipc = window.ipcRenderer;
+  if (!ipc?.on || !ipc?.off) return () => {};
+  const handler = (_event: any, payload: any) => {
+    callback(payload);
+  };
+  ipc.on("gitlab:merge-conflict", handler);
+  return () => {
+    ipc.off("gitlab:merge-conflict", handler);
+  };
+}
+
+export async function resolveConflict(payload: { runId: string; resolution: any }) {
+  return invoke()("gitlab:resolve-conflict", payload);
+}
+
+export async function getFileContent(payload: { projectId: number; filePath: string; ref: string }) {
+  return invoke()("gitlab:get-file-content", payload);
+}
+
+export async function createCommit(payload: { projectId: number; branch: string; message: string; actions: any[] }) {
+  return invoke()("gitlab:create-commit", payload);
+}

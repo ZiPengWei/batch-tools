@@ -4,6 +4,8 @@ import { useAuthStore } from './renderer/store/auth'
 import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
 import type { MergeRunSummary } from './renderer/store/merge'
+import ConflictDialog from './renderer/components/ConflictDialog.vue'
+import { onMergeConflict } from './renderer/ipc/bridge'
 
 const auth = useAuthStore()
 const projects = useProjectsStore()
@@ -99,6 +101,9 @@ const confirmLogEl = ref<HTMLDivElement | null>(null)
 const showFinish = ref(false)
 const finishSummary = ref<MergeRunSummary | null>(null)
 
+const conflictVisible = ref(false)
+const conflictData = ref<any>(null)
+
 const finishTitle = computed(() => {
   const s = finishSummary.value
   if (!s) return '合并结果'
@@ -147,6 +152,11 @@ watch(
 
 onMounted(() => {
   auth.loadLocal()
+
+  onMergeConflict((data) => {
+    conflictData.value = data
+    conflictVisible.value = true
+  })
 })
 </script>
 
@@ -370,6 +380,12 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <ConflictDialog
+      :visible="conflictVisible"
+      :conflict-data="conflictData"
+      @close="conflictVisible = false"
+    />
   </div>
 </template>
 

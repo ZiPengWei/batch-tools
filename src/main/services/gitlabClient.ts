@@ -259,12 +259,83 @@ export class GitLabClient {
           `/api/v4/projects/${projectId}/merge_requests/${mrIid}/conflicts`
         )
       );
-      if (res.status === 200 || res.status === 409)
-        return (res.data as any) || [];
+      if (res.status === 200 || res.status === 409) {
+        const data = res.data as any;
+        return Array.isArray(data?.files) ? data.files : [];
+      }
       return [];
     } catch {
       return [];
     }
+  }
+
+  async getFileContent(
+    projectId: number,
+    filePath: string,
+    ref: string
+  ): Promise<string> {
+    try {
+      const res = await requestWithRetry(() =>
+        this.http.get(
+          `/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(
+            filePath
+          )}/raw`,
+          {
+            params: { ref },
+            responseType: "text", // Ensure we get text content
+          }
+        )
+      );
+      return typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+    } catch (e) {
+      console.error(`Failed to get file content: ${filePath} @ ${ref}`, e);
+      throw e;
+    }
+  }
+
+  async getMergeBase(
+    projectId: number,
+    refs: string[]
+  ): Promise<string | null> {
+    try {
+      if (refs.length < 2) return null;
+      const res = await requestWithRetry(() =>
+        this.http.get<{ id: string }>(
+          `/api/v4/projects/${projectId}/repository/merge_base`,
+          {
+            params: { refs },
+          }
+        )
+      );
+      return res.data?.id || null;
+    } catch (e) {
+      console.error("Failed to get merge base", e);
+      return null;
+    }
+  }
+
+  async createCommit(
+    projectId: number,
+    branch: string,
+    message: string,
+    actions: {
+      action: "create" | "delete" | "move" | "update" | "chmod";
+      file_path: string;
+      previous_path?: string;
+      content?: string;
+      encoding?: "text" | "base64";
+      last_commit_id?: string;
+      execute_filemode?: boolean;
+    }[]
+  ): Promise<void> {
+    const data = {
+      branch,
+      commit_message: message,
+      actions,
+    };
+    await requestWithRetry(() =>
+      this.http.post(`/api/v4/projects/${projectId}/repository/commits`, data)
+    );
   }
 
   async getMergeRequestChanges(

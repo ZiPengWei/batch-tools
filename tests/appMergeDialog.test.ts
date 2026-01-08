@@ -87,7 +87,8 @@ describe("App 合并弹窗日志", () => {
 
     const wrapper = mount(App, { attachTo: document.body });
 
-    const dropdowns = wrapper.findAll(".selector-box.selector-dropdown");
+    // Using .branch-list.selector-box as selector-dropdown class is missing in current App.vue
+    const dropdowns = wrapper.findAll(".selector-box.branch-list");
     expect(dropdowns.length).toBe(2);
 
     wrapper.unmount();
