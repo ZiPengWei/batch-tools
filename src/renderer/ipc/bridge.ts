@@ -42,6 +42,7 @@ export async function batchMerge(
 export function onBatchMergeLog(callback: (e: BatchMergeLogEvent) => void) {
   const ipc = window.ipcRenderer;
   if (!ipc?.on || !ipc?.off) return () => {};
+  (ipc as any).removeAllListeners?.("gitlab:batch-merge-log");
   const handler = (_event: any, payload: BatchMergeLogEvent) => {
     callback(payload);
   };
