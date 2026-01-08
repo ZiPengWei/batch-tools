@@ -63,14 +63,89 @@ export function onMergeConflict(callback: (payload: any) => void) {
   };
 }
 
-export async function resolveConflict(payload: { runId: string; resolution: any }) {
+export async function resolveConflict(payload: {
+  runId: string;
+  resolution: any;
+}) {
   return invoke()("gitlab:resolve-conflict", payload);
 }
 
-export async function getFileContent(payload: { projectId: number; filePath: string; ref: string }) {
+export async function getFileContent(payload: {
+  projectId: number;
+  filePath: string;
+  ref: string;
+}) {
   return invoke()("gitlab:get-file-content", payload);
 }
 
-export async function createCommit(payload: { projectId: number; branch: string; message: string; actions: any[] }) {
+export async function getMergeRequestChanges(payload: {
+  projectId: number;
+  mrIid: number;
+}) {
+  return invoke()("gitlab:get-merge-request-changes", payload);
+}
+
+export async function getMergeRequestConflicts(payload: {
+  projectId: number;
+  mrIid: number;
+}) {
+  return invoke()("gitlab:get-merge-request-conflicts", payload);
+}
+
+export async function getMergeRequest(payload: {
+  projectId: number;
+  mrIid: number;
+}) {
+  return invoke()("gitlab:get-merge-request", payload);
+}
+
+export async function createCommit(payload: {
+  projectId: number;
+  branch: string;
+  message: string;
+  actions: any[];
+}) {
   return invoke()("gitlab:create-commit", payload);
+}
+
+export async function getMergeBase(payload: {
+  projectId: number;
+  refs: string[];
+}) {
+  return invoke()("gitlab:get-merge-base", payload);
+}
+
+export async function localGitPrepareConflicts(payload: {
+  runId: string;
+  projectId: number;
+  source: string;
+  target: string;
+  mrWebUrl?: string;
+}) {
+  return invoke()("localgit:prepare-conflicts", payload);
+}
+
+export async function localGitGetFileContents(payload: {
+  runId: string;
+  filePath: string;
+}) {
+  return invoke()("localgit:get-file-contents", payload);
+}
+
+export async function localGitMergeFileContents(payload: {
+  base: string;
+  left: string;
+  right: string;
+  labels?: { left?: string; base?: string; right?: string };
+  diff3?: boolean;
+}) {
+  return invoke()("localgit:merge-file-contents", payload);
+}
+
+export async function localGitCleanup(payload: { runId: string }) {
+  return invoke()("localgit:cleanup", payload);
+}
+
+export async function openExternal(url: string) {
+  return invoke()("shell:open-external", url);
 }

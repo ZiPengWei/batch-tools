@@ -5,7 +5,7 @@ import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
 import type { MergeRunSummary } from './renderer/store/merge'
 import ConflictDialog from './renderer/components/ConflictDialog.vue'
-import { onMergeConflict } from './renderer/ipc/bridge'
+import { onMergeConflict, openExternal } from './renderer/ipc/bridge'
 
 const auth = useAuthStore()
 const projects = useProjectsStore()
@@ -103,6 +103,13 @@ const finishSummary = ref<MergeRunSummary | null>(null)
 
 const conflictVisible = ref(false)
 const conflictData = ref<any>(null)
+const conflictMrWebUrl = computed(() => conflictData.value?.mrWebUrl || '')
+
+function openConflictMr() {
+  const url = conflictMrWebUrl.value
+  if (!url) return
+  openExternal(url)
+}
 
 const finishTitle = computed(() => {
   const s = finishSummary.value
@@ -328,6 +335,10 @@ onMounted(() => {
           </div>
         </div>
         <div v-if="confirmRunning" class="dialog-text">
+          <div v-if="conflictVisible" class="small muted" style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
+            <span>冲突处理中：已弹出冲突解决窗口，请完成处理后继续。</span>
+            <button v-if="conflictMrWebUrl" class="btn ghost" @click="openConflictMr">打开 MR</button>
+          </div>
           <div class="muted small">操作日志</div>
           <div ref="confirmLogEl" class="log">
             <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">

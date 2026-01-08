@@ -1,6 +1,205 @@
 import { describe, expect, it, vi } from "vitest";
 import { reactive } from "vue";
 
+class MockModel {
+  private value: string;
+  private listeners: Array<() => void> = [];
+  constructor(initial: string) {
+    this.value = initial;
+  }
+  dispose() {}
+  getValue() {
+    return this.value;
+  }
+  setValue(v: string) {
+    this.value = v;
+    this.listeners.forEach((fn) => fn());
+  }
+  getLineCount() {
+    return this.value.length ? this.value.split("\n").length : 1;
+  }
+  getLineContent(lineNumber: number) {
+    const lines = this.value.split("\n");
+    return lines[lineNumber - 1] ?? "";
+  }
+  getLineMaxColumn(lineNumber: number) {
+    const line = this.getLineContent(lineNumber);
+    return (line?.length ?? 0) + 1;
+  }
+  getValueInRange(range: {
+    startLineNumber: number;
+    startColumn: number;
+    endLineNumber: number;
+    endColumn: number;
+  }) {
+    const start = toOffset(
+      this.value,
+      range.startLineNumber,
+      range.startColumn
+    );
+    const end = toOffset(this.value, range.endLineNumber, range.endColumn);
+    return this.value.slice(Math.min(start, end), Math.max(start, end));
+  }
+  onDidChangeContent(cb: () => void) {
+    this.listeners.push(cb);
+    return {
+      dispose: () => {
+        const idx = this.listeners.indexOf(cb);
+        if (idx >= 0) this.listeners.splice(idx, 1);
+      },
+    };
+  }
+}
+
+function toOffset(text: string, lineNumber: number, column: number) {
+  const lines = text.split("\n");
+  let offset = 0;
+  const ln = Math.max(1, lineNumber);
+  const col = Math.max(1, column);
+  for (let i = 0; i < ln - 1; i++) offset += (lines[i]?.length ?? 0) + 1;
+  offset += col - 1;
+  return Math.min(Math.max(offset, 0), text.length);
+}
+
+class MockStandaloneEditor {
+  private model: MockModel;
+  private position = { lineNumber: 1, column: 1 };
+  private selection = {
+    startLineNumber: 1,
+    startColumn: 1,
+    endLineNumber: 1,
+    endColumn: 1,
+  };
+  private scrollTop = 0;
+  private scrollLeft = 0;
+  private scrollListeners: Array<() => void> = [];
+  private mouseDownListeners: Array<(e: any) => void> = [];
+  public decorations: any[] = [];
+  public revealedLine: number | null = null;
+  public focused = false;
+  constructor(model: MockModel) {
+    this.model = model;
+  }
+  focus() {
+    this.focused = true;
+  }
+  getModel() {
+    return this.model as any;
+  }
+  setModel(model: any) {
+    this.model = model as any;
+  }
+  getPosition() {
+    return this.position as any;
+  }
+  setPosition(pos: { lineNumber: number; column: number }) {
+    this.position = pos;
+    this.selection = {
+      startLineNumber: pos.lineNumber,
+      startColumn: pos.column,
+      endLineNumber: pos.lineNumber,
+      endColumn: pos.column,
+    };
+  }
+  getSelection() {
+    return this.selection as any;
+  }
+  setSelection(sel: any) {
+    this.selection = sel;
+  }
+  onDidScrollChange(cb: () => void) {
+    this.scrollListeners.push(cb);
+    return {
+      dispose: () => {
+        const idx = this.scrollListeners.indexOf(cb);
+        if (idx >= 0) this.scrollListeners.splice(idx, 1);
+      },
+    };
+  }
+  getScrollTop() {
+    return this.scrollTop;
+  }
+  getScrollLeft() {
+    return this.scrollLeft;
+  }
+  getTopForLineNumber(lineNumber: number) {
+    const ln = Math.max(1, Number(lineNumber || 1));
+    const lineHeight = 18;
+    return (ln - 1) * lineHeight;
+  }
+  setScrollTop(v: number) {
+    this.scrollTop = v;
+  }
+  setScrollLeft(v: number) {
+    this.scrollLeft = v;
+  }
+  triggerScroll() {
+    this.scrollListeners.forEach((fn) => fn());
+  }
+  onMouseDown(cb: (e: any) => void) {
+    this.mouseDownListeners.push(cb);
+    return {
+      dispose: () => {
+        const idx = this.mouseDownListeners.indexOf(cb);
+        if (idx >= 0) this.mouseDownListeners.splice(idx, 1);
+      },
+    };
+  }
+  triggerMouseDown(e: any) {
+    this.mouseDownListeners.forEach((fn) => fn(e));
+  }
+  revealLineInCenter(line: number) {
+    this.revealedLine = line;
+  }
+  layout() {}
+  executeEdits(_: string, edits: any[]) {
+    const before = this.model.getValue();
+    let value = before;
+    for (const e of edits) {
+      const r = e.range;
+      const start = toOffset(value, r.startLineNumber, r.startColumn);
+      const end = toOffset(value, r.endLineNumber, r.endColumn);
+      value = value.slice(0, start) + String(e.text ?? "") + value.slice(end);
+    }
+    this.model.setValue(value);
+  }
+  deltaDecorations(_: string[], next: any[]) {
+    this.decorations = next;
+    return next.map((_, idx) => `d${idx}`);
+  }
+}
+
+vi.mock("monaco-editor", () => {
+  const editor = {
+    createModel: (value: string) => new MockModel(value),
+    create: () => new MockStandaloneEditor(new MockModel("")),
+    defineTheme: () => {},
+    setTheme: () => {},
+    MouseTargetType: {
+      GUTTER_GLYPH_MARGIN: 2,
+    },
+  };
+  return { editor };
+});
+
+vi.mock("monaco-editor/esm/vs/editor/editor.worker?worker", () => {
+  return { default: class EditorWorker {} };
+});
+vi.mock("monaco-editor/esm/vs/language/json/json.worker?worker", () => {
+  return { default: class JsonWorker {} };
+});
+vi.mock("monaco-editor/esm/vs/language/css/css.worker?worker", () => {
+  return { default: class CssWorker {} };
+});
+vi.mock("monaco-editor/esm/vs/language/html/html.worker?worker", () => {
+  return { default: class HtmlWorker {} };
+});
+vi.mock("monaco-editor/esm/vs/language/typescript/ts.worker?worker", () => {
+  return { default: class TsWorker {} };
+});
+
+let mergeConflictCb: ((payload: any) => void) | null = null;
+
 const authStoreMock = {
   baseUrl: "http://example",
   token: "t",
@@ -80,6 +279,29 @@ vi.mock("../src/renderer/store/merge", () => {
   };
 });
 
+vi.mock("../src/renderer/ipc/bridge", () => {
+  return {
+    onMergeConflict: (cb: (payload: any) => void) => {
+      mergeConflictCb = cb;
+      return () => {
+        if (mergeConflictCb === cb) mergeConflictCb = null;
+      };
+    },
+    resolveConflict: vi.fn().mockResolvedValue({ ok: true }),
+    openExternal: vi.fn(),
+    getFileContent: vi.fn(),
+    createCommit: vi.fn(),
+    getMergeBase: vi.fn(),
+    getMergeRequestChanges: vi.fn().mockResolvedValue({ changes: [] }),
+    getMergeRequestConflicts: vi.fn().mockResolvedValue([]),
+    getMergeRequest: vi.fn().mockResolvedValue({}),
+    localGitPrepareConflicts: vi.fn(),
+    localGitGetFileContents: vi.fn(),
+    localGitMergeFileContents: vi.fn(),
+    localGitCleanup: vi.fn(),
+  };
+});
+
 describe("App 合并弹窗日志", () => {
   it("源分支与目标分支列表使用下拉滚动容器样式", async () => {
     const { mount } = await import("@vue/test-utils");
@@ -141,6 +363,1326 @@ describe("App 合并弹窗日志", () => {
       (resolveMergeRun as any)({ ok: true, mergedCount: 0, noopCount: 0 });
     await nextTick();
 
+    wrapper.unmount();
+  });
+
+  it("收到冲突事件时会弹出冲突解决窗口", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const App = (await import("../src/App.vue")).default;
+
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          ConflictDialog: {
+            props: ["visible", "conflictData"],
+            emits: ["close", "resolved"],
+            template:
+              '<div v-if="visible" class="conflict-stub">{{ conflictData?.mrIid }}</div>',
+          },
+        },
+      },
+    });
+
+    expect(mergeConflictCb).toBeTruthy();
+    const cb = mergeConflictCb;
+    if (!cb) throw new Error("mergeConflictCb missing");
+    cb({
+      runId: "r1",
+      projectId: 1,
+      source: "wzp-fix",
+      target: "dev",
+      mrIid: 1222,
+      mrWebUrl: "http://gitlab/mr/1222",
+      conflicts: [{ type: "text", new_path: "a.txt" }],
+    });
+
+    await nextTick();
+    expect(wrapper.find(".conflict-stub").exists()).toBe(true);
+    expect(wrapper.find(".conflict-stub").text()).toContain("1222");
+
+    wrapper.unmount();
+  });
+});
+
+describe("ConflictDialog 交互", () => {
+  it("冲突文件列表为空时可确认已在 GitLab 解决并继续检测", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeRequestChanges.mockResolvedValueOnce({
+      changes: [{ new_path: "a.txt" }, { new_path: "b.png" }],
+    });
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath }: any) => {
+        if (filePath === ".gitattributes") return "* -text\n*.png binary\n";
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [],
+          conflictApiDebug: {
+            ok: true,
+            method: "GET",
+            url: "http://gitlab/api/v4/projects/1/merge_requests/1222/conflicts",
+            status: 409,
+            requestHeaders: { "PRIVATE-TOKEN": "[REDACTED]" },
+            responseHeaders: { "x-request-id": "req1" },
+            bodyKeys: ["files"],
+          },
+          mrDetails: {
+            merge_status: "cannot_be_merged",
+            detailed_merge_status: "conflicts",
+            has_conflicts: true,
+            state: "opened",
+            changes_count: "2",
+          },
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 6; i++) {
+      await nextTick();
+      await Promise.resolve();
+    }
+    expect(wrapper.text()).toContain("未找到冲突文件");
+    expect(wrapper.text()).toContain("进度: 0 / 0");
+    expect(wrapper.text()).toContain("MR 变更文件（供排查）");
+    expect(wrapper.text()).toContain("a.txt");
+    expect(wrapper.text()).toContain("b.png");
+    expect(wrapper.text()).toContain(".gitattributes");
+    expect(wrapper.text()).toContain("冲突接口诊断");
+    expect(wrapper.text()).toContain("MR 合并状态");
+    expect(wrapper.text()).toContain("merge_status=cannot_be_merged");
+
+    const btn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().includes("我已在 GitLab 解决"));
+    expect(btn).toBeTruthy();
+    await (btn as any).trigger("click");
+
+    expect((bridge as any).resolveConflict).toHaveBeenCalledWith({
+      runId: "r1",
+      resolution: { resolved: true },
+    });
+    expect(wrapper.emitted("close")).toBeTruthy();
+    expect(wrapper.emitted("resolved")).toBeTruthy();
+
+    wrapper.unmount();
+  });
+
+  it("冲突文件列表为空时可从 MR 变更文件进入三屏三方合并", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeRequestChanges.mockResolvedValueOnce({
+      changes: [{ new_path: "a.txt" }],
+    });
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (filePath === ".gitattributes") return "* -text\n";
+        if (filePath === "a.txt" && ref === "baseSha") return "B1\nB2\nB3";
+        if (filePath === "a.txt" && ref === "dev") return "L1\nB2\nB3";
+        if (filePath === "a.txt" && ref === "wzp-fix") return "B1\nB2\nR3";
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_adhoc_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [],
+          conflictApiDebug: { ok: false, status: 404 },
+          mrDetails: { merge_status: "cannot_be_merged", has_conflicts: true },
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 40; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (wrapper.text().includes("a.txt")) break;
+    }
+    expect(wrapper.text()).toContain("MR 变更文件（供排查）");
+    expect(wrapper.text()).toContain("a.txt");
+
+    const btn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().trim() === "三方合并");
+    expect(btn).toBeTruthy();
+    await (btn as any).trigger("click");
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (wrapper.find(".merge-panes-header").exists()) break;
+    }
+    expect(wrapper.find(".merge-panes-header").exists()).toBe(true);
+    expect(wrapper.text()).toContain("解决冲突: a.txt");
+
+    expect((bridge as any).getMergeBase).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 1, refs: ["wzp-fix", "dev"] })
+    );
+    const fileReads = ((bridge as any).getFileContent as any).mock?.calls ?? [];
+    expect(
+      fileReads.some(
+        (c: any[]) => c?.[0]?.filePath === "a.txt" && c?.[0]?.ref === "dev"
+      )
+    ).toBe(true);
+    expect(
+      fileReads.some(
+        (c: any[]) => c?.[0]?.filePath === "a.txt" && c?.[0]?.ref === "wzp-fix"
+      )
+    ).toBe(true);
+    expect(
+      fileReads.some(
+        (c: any[]) => c?.[0]?.filePath === "a.txt" && c?.[0]?.ref === "baseSha"
+      )
+    ).toBe(true);
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("冲突文件列表为空时支持本地 Git 检测并加载文件内容", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).localGitPrepareConflicts.mockResolvedValueOnce({
+      ok: true,
+      conflicts: [{ type: "text", new_path: "a.txt" }],
+      baseSha: "baseSha",
+    });
+    (bridge as any).localGitGetFileContents.mockImplementation(
+      async ({ filePath }: any) => {
+        if (filePath === "a.txt")
+          return {
+            ok: true,
+            base: "B1\nB2",
+            left: "L1\nB2",
+            right: "B1\nR2",
+            baseSha: "baseSha",
+          };
+        return { ok: true, base: "", left: "", right: "", baseSha: "baseSha" };
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_local_git_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/group/proj/-/merge_requests/1222",
+          conflicts: [],
+          conflictApiDebug: { ok: false, status: 404 },
+          mrDetails: { merge_status: "cannot_be_merged", has_conflicts: true },
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 20; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    }
+
+    expect(wrapper.text()).toContain("未找到冲突文件");
+    ((bridge as any).getFileContent as any).mockClear?.();
+    const btn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().includes("本地 Git"));
+    expect(btn).toBeTruthy();
+    await (btn as any).trigger("click");
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (wrapper.text().includes("a.txt")) break;
+    }
+
+    expect((bridge as any).localGitPrepareConflicts).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "r_local_git_1", projectId: 1 })
+    );
+    expect((bridge as any).localGitGetFileContents).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "r_local_git_1", filePath: "a.txt" })
+    );
+    const gitlabFileReads =
+      ((bridge as any).getFileContent as any).mock?.calls ?? [];
+    expect(
+      gitlabFileReads.some((c: any[]) => c?.[0]?.filePath === "a.txt")
+    ).toBe(false);
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("支持 Git 三方合并按钮并调用本地 merge-file 接口", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValueOnce("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return "B1\nB2\nB3";
+      if (ref === "dev") return "L1\nB2\nB3";
+      if (ref === "wzp-fix") return "B1\nB2\nR3";
+      return "";
+    });
+    (bridge as any).localGitMergeFileContents.mockResolvedValueOnce({
+      ok: true,
+      merged: "MERGED",
+      hasConflicts: false,
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_git_merge_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/group/proj/-/merge_requests/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 40; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (wrapper.text().includes("a.txt")) break;
+    }
+
+    const btn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().includes("Git 三方合并"));
+    expect(btn).toBeTruthy();
+    await (btn as any).trigger("click");
+
+    for (let i = 0; i < 40; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (((bridge as any).localGitMergeFileContents as any).mock.calls.length)
+        break;
+    }
+
+    expect((bridge as any).localGitMergeFileContents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        left: expect.any(String),
+        base: expect.any(String),
+        right: expect.any(String),
+      })
+    );
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("冲突文件列表为空时可取消合并并结束等待", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r2",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    await nextTick();
+    const btn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().includes("取消合并"));
+    expect(btn).toBeTruthy();
+    await (btn as any).trigger("click");
+
+    expect((bridge as any).resolveConflict).toHaveBeenCalledWith({
+      runId: "r2",
+      resolution: { resolved: false },
+    });
+    expect(wrapper.emitted("close")).toBeTruthy();
+
+    wrapper.unmount();
+  });
+
+  it("切换冲突文件后保留各文件的编辑与撤销栈", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r3",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [
+            { type: "text", new_path: "a.txt" },
+            { type: "text", new_path: "b.txt" },
+          ],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      const loadingRef = setupState.loading;
+      const currentFileRef = setupState.currentFile;
+      const middleEditorRef = setupState.middleEditor;
+      const loading = loadingRef?.value ?? loadingRef;
+      const currentPath = (currentFileRef?.value ?? currentFileRef)?.new_path;
+      const middleEditor = middleEditorRef?.value ?? middleEditorRef;
+      if (loading === false && currentPath === "a.txt" && middleEditor) break;
+    }
+    const middleEditorReady =
+      setupState.middleEditor?.value ?? setupState.middleEditor;
+    expect(middleEditorReady).toBeTruthy();
+
+    const acceptBoth = setupState.acceptBothBranches as any;
+    expect(typeof acceptBoth).toBe("function");
+    acceptBoth();
+    await nextTick();
+
+    const fileStatesRef0 = setupState.fileStates;
+    const fileStates0 = fileStatesRef0?.value ?? fileStatesRef0;
+    const middleEditor0 = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const resultModel0 = middleEditor0?.getModel?.();
+    expect(resultModel0?.getValue?.()).toContain("<<<<<<< 本地版本 (dev)");
+    expect(fileStates0["a.txt"].content).toContain("<<<<<<< 本地版本 (dev)");
+
+    const markResolved = setupState.markResolved as any;
+    expect(typeof markResolved).toBe("function");
+    await markResolved();
+
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      const loadingRef = setupState.loading;
+      const currentFileRef = setupState.currentFile;
+      const loading = loadingRef?.value ?? loadingRef;
+      const currentPath = (currentFileRef?.value ?? currentFileRef)?.new_path;
+      if (loading === false && currentPath === "b.txt") break;
+    }
+
+    expect(wrapper.text()).toContain("已暂存: 1");
+    expect(wrapper.text()).toContain("解决冲突: b.txt");
+
+    const fileStatesRef = setupState.fileStates;
+    const fileStates = fileStatesRef?.value ?? fileStatesRef;
+    expect(fileStates["a.txt"].content).toContain("<<<<<<< 本地版本 (dev)");
+    expect(fileStates["a.txt"].undo.length).toBeGreaterThan(0);
+
+    const bStateBefore = (fileStatesRef?.value ?? fileStatesRef)["b.txt"];
+    const undoBefore = bStateBefore?.undo?.length ?? 0;
+    const acceptTarget = setupState.acceptTargetBranch as any;
+    expect(typeof acceptTarget).toBe("function");
+    acceptTarget();
+
+    const bStateAfterAccept = (fileStatesRef?.value ?? fileStatesRef)["b.txt"];
+    expect(bStateAfterAccept.undo.length).toBe(undoBefore + 1);
+    const undoEdit = setupState.undoEdit as any;
+    expect(typeof undoEdit).toBe("function");
+    undoEdit();
+
+    const fileStates2 = (fileStatesRef?.value ?? fileStatesRef) as any;
+    expect(fileStates2["b.txt"].redo.length).toBe(1);
+
+    wrapper.unmount();
+  });
+
+  it("冲突文件列表支持多选与全选/全不选", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r4",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [
+            { type: "text", new_path: "a.txt" },
+            { type: "text", new_path: "b.txt" },
+          ],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 20; i++) {
+      await nextTick();
+      await Promise.resolve();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const loading = loadingRef?.value ?? loadingRef;
+      if (loading === false) break;
+    }
+
+    const checks = wrapper.findAll('input[type="checkbox"]');
+    expect(checks.length).toBe(2);
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const selectNone = setupState.selectNone as any;
+    expect(typeof selectNone).toBe("function");
+    selectNone();
+    await nextTick();
+    const selectedLen1 =
+      (setupState.selectedPaths?.value ?? setupState.selectedPaths)?.length ??
+      0;
+    expect(selectedLen1).toBe(0);
+
+    const selectAll = setupState.selectAll as any;
+    expect(typeof selectAll).toBe("function");
+    selectAll();
+    await nextTick();
+
+    const selectedLen2 =
+      (setupState.selectedPaths?.value ?? setupState.selectedPaths)?.length ??
+      0;
+    expect(selectedLen2).toBe(2);
+
+    wrapper.unmount();
+  });
+
+  it("未选择任何文件时禁止完成并提示选择", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r5",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [
+            { type: "text", new_path: "a.txt" },
+            { type: "text", new_path: "b.txt" },
+          ],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 40; i++) {
+      await nextTick();
+      await Promise.resolve();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const loading = loadingRef?.value ?? loadingRef;
+      const middleEditorRef = setupState.middleEditor;
+      const middleEditor = middleEditorRef?.value ?? middleEditorRef;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const selectNone = setupState.selectNone as any;
+    expect(typeof selectNone).toBe("function");
+    selectNone();
+    await nextTick();
+    const markResolved = setupState.markResolved as any;
+    expect(typeof markResolved).toBe("function");
+    await markResolved();
+
+    expect(alertSpy).toHaveBeenCalled();
+
+    alertSpy.mockRestore();
+    wrapper.unmount();
+  });
+
+  it("支持逐行按钮与快捷键插入到中间结果，并触发差异高亮更新", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3`;
+      if (ref === "dev") return `L1\nL2\nL3`;
+      if (ref === "wzp-fix") return `R1\nR2\nR3`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r6",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const middleEditorRef = setupState.middleEditor;
+      const loading = loadingRef?.value ?? loadingRef;
+      const middleEditor = middleEditorRef?.value ?? middleEditorRef;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const leftEditor = (setupState.leftEditor?.value ??
+      setupState.leftEditor) as any;
+    const rightEditor = (setupState.rightEditor?.value ??
+      setupState.rightEditor) as any;
+    expect(middleEditor).toBeTruthy();
+    expect(leftEditor).toBeTruthy();
+    expect(rightEditor).toBeTruthy();
+
+    await vi.runOnlyPendingTimersAsync();
+    const localDecorations = (leftEditor as any).decorations ?? [];
+    const remoteDecorations = (rightEditor as any).decorations ?? [];
+    expect(localDecorations.length + remoteDecorations.length).toBeGreaterThan(
+      0
+    );
+    expect(
+      localDecorations.some(
+        (d: any) => d?.options?.className === "conflict-line-local"
+      )
+    ).toBe(true);
+    expect(
+      remoteDecorations.some(
+        (d: any) => d?.options?.className === "conflict-line-remote"
+      )
+    ).toBe(true);
+
+    (rightEditor as any).setPosition({ lineNumber: 2, column: 1 });
+    const remoteBtn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().includes("插入远程当前行"));
+    expect(remoteBtn).toBeTruthy();
+    await (remoteBtn as any).trigger("click");
+    await nextTick();
+
+    const resultModel = middleEditor.getModel();
+    expect(resultModel.getValue().startsWith("R2\n")).toBe(true);
+
+    (leftEditor as any).setPosition({ lineNumber: 3, column: 1 });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "1", altKey: true, ctrlKey: true })
+    );
+    await nextTick();
+
+    expect(resultModel.getValue().startsWith("L3\nR2\n")).toBe(true);
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("支持快捷键替换当前行为本地/远程，且不会越界崩溃", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3`;
+      if (ref === "dev") return `L1\nL2\nL3`;
+      if (ref === "wzp-fix") return `R1\nR2\nR3`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r7",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const middleEditorRef = setupState.middleEditor;
+      const loading = loadingRef?.value ?? loadingRef;
+      const middleEditor = middleEditorRef?.value ?? middleEditorRef;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const leftEditor = (setupState.leftEditor?.value ??
+      setupState.leftEditor) as any;
+    const rightEditor = (setupState.rightEditor?.value ??
+      setupState.rightEditor) as any;
+
+    const model = middleEditor.getModel();
+    expect(model.getValue()).toBe("B1\nB2\nB3");
+
+    middleEditor.setPosition({ lineNumber: 2, column: 1 });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "1", ctrlKey: true })
+    );
+    await nextTick();
+    expect(model.getValue()).toBe("B1\nL2\nB3");
+
+    middleEditor.setPosition({ lineNumber: 3, column: 1 });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "2", ctrlKey: true })
+    );
+    await nextTick();
+    expect(model.getValue()).toBe("B1\nL2\nR3");
+
+    middleEditor.setPosition({ lineNumber: 99, column: 1 });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "1", ctrlKey: true })
+    );
+    await nextTick();
+    expect(model.getValue()).toBe("B1\nL2\nR3");
+
+    expect((leftEditor as any).getModel?.().getValue?.()).toBe("L1\nL2\nL3");
+    expect((rightEditor as any).getModel?.().getValue?.()).toBe("R1\nR2\nR3");
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("支持快捷键替换选区为本地/远程，含反向选区", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3`;
+      if (ref === "dev") return `L1\nL2\nL3`;
+      if (ref === "wzp-fix") return `R1\nR2\nR3`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r8",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const middleEditorRef = setupState.middleEditor;
+      const loading = loadingRef?.value ?? loadingRef;
+      const middleEditor = middleEditorRef?.value ?? middleEditorRef;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const model = middleEditor.getModel();
+    expect(model.getValue()).toBe("B1\nB2\nB3");
+
+    middleEditor.setSelection({
+      startLineNumber: 3,
+      startColumn: 1,
+      endLineNumber: 2,
+      endColumn: 1,
+    });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "1", shiftKey: true, ctrlKey: true })
+    );
+    await nextTick();
+    expect(model.getValue()).toBe("B1\nL2\nL3");
+
+    middleEditor.setSelection({
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 3,
+      endColumn: 1,
+    });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "2", shiftKey: true, ctrlKey: true })
+    );
+    await nextTick();
+    expect(model.getValue()).toBe("R1\nR2\nR3");
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("支持 F7 / Shift+F7 跳转冲突位置", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3`;
+      if (ref === "dev") return `B1\nL2\nL3`;
+      if (ref === "wzp-fix") return `B1\nR2\nR3`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r9",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+
+    middleEditor.setPosition({ lineNumber: 1, column: 1 });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "F7" }));
+    await nextTick();
+    expect(middleEditor.revealedLine).toBe(2);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "F7" }));
+    await nextTick();
+    expect(middleEditor.revealedLine).toBe(3);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "F7" }));
+    await nextTick();
+    expect(middleEditor.revealedLine).toBe(2);
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "F7", shiftKey: true })
+    );
+    await nextTick();
+    expect(middleEditor.revealedLine).toBe(3);
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("支持 WebStorm 常见快捷键应用左/右（Mac/Win）", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3`;
+      if (ref === "dev") return `B1\nL2\nB3`;
+      if (ref === "wzp-fix") return `B1\nR2\nB3`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r10",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const model = middleEditor.getModel();
+
+    const oldPlatform = (navigator as any).platform;
+    try {
+      Object.defineProperty(navigator, "platform", {
+        value: "Win32",
+        configurable: true,
+      });
+      middleEditor.setPosition({ lineNumber: 2, column: 1 });
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          altKey: true,
+          shiftKey: true,
+        })
+      );
+      await nextTick();
+      expect(model.getValue()).toBe("B1\nL2\nB3");
+
+      Object.defineProperty(navigator, "platform", {
+        value: "MacIntel",
+        configurable: true,
+      });
+      middleEditor.setPosition({ lineNumber: 2, column: 1 });
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          ctrlKey: true,
+          shiftKey: true,
+        })
+      );
+      await nextTick();
+      expect(model.getValue()).toBe("B1\nR2\nB3");
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: oldPlatform,
+        configurable: true,
+      });
+    }
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("自动合并非重叠修改到结果面板", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `A\nB\nC`;
+      if (ref === "dev") return `A\nBX\nC`;
+      if (ref === "wzp-fix") return `A\nB\nCY`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r11",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const model = middleEditor.getModel();
+    expect(model.getValue()).toBe("A\nBX\nCY");
+    expect(wrapper.find(".webstorm-merge-overlay").exists()).toBe(false);
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("检测插入型冲突并可按块应用左/右", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `A\nB\nC`;
+      if (ref === "dev") return `A\nX\nB\nC`;
+      if (ref === "wzp-fix") return `A\nY\nB\nC`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r12",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const model = middleEditor.getModel();
+
+    expect(model.getValue()).toBe("A\nB\nC");
+    const btn = wrapper.find(".webstorm-merge-btn");
+    expect(btn.exists()).toBe(true);
+    await btn.trigger("click");
+    await nextTick();
+    expect(model.getValue()).toBe("A\nX\nB\nC");
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("三屏滚动保持同步", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3\nB4\nB5`;
+      if (ref === "dev") return `L1\nL2\nL3\nL4\nL5`;
+      if (ref === "wzp-fix") return `R1\nR2\nR3\nR4\nR5`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r9",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const loading = loadingRef?.value ?? loadingRef;
+      const leftEditor = setupState.leftEditor?.value ?? setupState.leftEditor;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      const rightEditor =
+        setupState.rightEditor?.value ?? setupState.rightEditor;
+      if (loading === false && leftEditor && middleEditor && rightEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const leftEditor = (setupState.leftEditor?.value ??
+      setupState.leftEditor) as any;
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    const rightEditor = (setupState.rightEditor?.value ??
+      setupState.rightEditor) as any;
+
+    leftEditor.setScrollTop(123);
+    leftEditor.setScrollLeft(7);
+    leftEditor.triggerScroll();
+    expect(middleEditor.getScrollTop()).toBe(123);
+    expect(rightEditor.getScrollTop()).toBe(123);
+    expect(middleEditor.getScrollLeft()).toBe(7);
+    expect(rightEditor.getScrollLeft()).toBe(7);
+
+    middleEditor.setScrollTop(9);
+    middleEditor.setScrollLeft(3);
+    middleEditor.triggerScroll();
+    expect(leftEditor.getScrollTop()).toBe(9);
+    expect(rightEditor.getScrollTop()).toBe(9);
+    expect(leftEditor.getScrollLeft()).toBe(3);
+    expect(rightEditor.getScrollLeft()).toBe(3);
+
+    vi.useRealTimers();
+    wrapper.unmount();
+  });
+
+  it("点击冲突标记可导航到对应行并聚焦编辑器", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return `B1\nB2\nB3`;
+      if (ref === "dev") return `B1\nL2\nB3`;
+      if (ref === "wzp-fix") return `B1\nR2\nB3`;
+      return "";
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r10",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loadingRef = setupState.loading;
+      const middleEditorRef = setupState.middleEditor;
+      const loading = loadingRef?.value ?? loadingRef;
+      const middleEditor = middleEditorRef?.value ?? middleEditorRef;
+      if (loading === false && middleEditor) break;
+    }
+
+    await vi.runOnlyPendingTimersAsync();
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const middleEditor = (setupState.middleEditor?.value ??
+      setupState.middleEditor) as any;
+    expect(middleEditor).toBeTruthy();
+
+    middleEditor.triggerMouseDown({
+      target: {
+        position: { lineNumber: 2 },
+        type: 2,
+      },
+    });
+
+    expect(middleEditor.revealedLine).toBe(2);
+    expect(middleEditor.getPosition().lineNumber).toBe(2);
+    expect(middleEditor.focused).toBe(true);
+
+    vi.useRealTimers();
     wrapper.unmount();
   });
 });

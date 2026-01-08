@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, ipcMain, screen, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { GitLabClient } from "../src/main/services/gitlabClient";
+import { LocalGitConflictService } from "../src/main/services/localGitConflictService";
 import { MergeService } from "../src/main/services/mergeService";
 import type {
   BatchMergeRequest,
@@ -37,6 +38,7 @@ let win: BrowserWindow | null;
 
 const gitlab = new GitLabClient();
 const mergeService = new MergeService(gitlab);
+const localGit = new LocalGitConflictService(gitlab);
 
 // Map to store conflict resolvers: runId -> resolveFunction
 const conflictResolvers = new Map<string, (res: any) => void>();
@@ -135,6 +137,7 @@ ipcMain.handle(
     _event: IpcMainInvokeEvent,
     payload: { runId: string; resolution: any }
   ) => {
+    await localGit.cleanup(payload.runId);
     const resolve = conflictResolvers.get(payload.runId);
     if (resolve) {
       resolve(payload.resolution);
@@ -142,6 +145,55 @@ ipcMain.handle(
       return { ok: true };
     }
     return { ok: false, error: "No active conflict resolution found" };
+  }
+);
+
+ipcMain.handle(
+  "localgit:prepare-conflicts",
+  async (
+    _event: IpcMainInvokeEvent,
+    payload: {
+      runId: string;
+      projectId: number;
+      source: string;
+      target: string;
+      mrWebUrl?: string;
+    }
+  ) => {
+    return await localGit.prepare(payload);
+  }
+);
+
+ipcMain.handle(
+  "localgit:get-file-contents",
+  async (
+    _event: IpcMainInvokeEvent,
+    payload: { runId: string; filePath: string }
+  ) => {
+    return await localGit.getFileContents(payload);
+  }
+);
+
+ipcMain.handle(
+  "localgit:merge-file-contents",
+  async (
+    _event: IpcMainInvokeEvent,
+    payload: {
+      base: string;
+      left: string;
+      right: string;
+      labels?: { left?: string; base?: string; right?: string };
+      diff3?: boolean;
+    }
+  ) => {
+    return await localGit.mergeFileContents(payload);
+  }
+);
+
+ipcMain.handle(
+  "localgit:cleanup",
+  async (_event: IpcMainInvokeEvent, payload: { runId: string }) => {
+    return await localGit.cleanup(payload.runId);
   }
 );
 
@@ -156,6 +208,33 @@ ipcMain.handle(
       payload.filePath,
       payload.ref
     );
+  }
+);
+
+ipcMain.handle(
+  "gitlab:get-merge-request-changes",
+  async (_event, payload: { projectId: number; mrIid: number }) => {
+    return await gitlab.getMergeRequestChanges(
+      payload.projectId,
+      payload.mrIid
+    );
+  }
+);
+
+ipcMain.handle(
+  "gitlab:get-merge-request-conflicts",
+  async (_event, payload: { projectId: number; mrIid: number }) => {
+    return await gitlab.getMergeRequestConflicts(
+      payload.projectId,
+      payload.mrIid
+    );
+  }
+);
+
+ipcMain.handle(
+  "gitlab:get-merge-request",
+  async (_event, payload: { projectId: number; mrIid: number }) => {
+    return await gitlab.getMergeRequest(payload.projectId, payload.mrIid);
   }
 );
 
@@ -178,6 +257,17 @@ ipcMain.handle(
     );
   }
 );
+
+ipcMain.handle(
+  "gitlab:get-merge-base",
+  async (_event, payload: { projectId: number; refs: string[] }) => {
+    return await gitlab.getMergeBase(payload.projectId, payload.refs);
+  }
+);
+
+ipcMain.handle("shell:open-external", async (_event, url: string) => {
+  await shell.openExternal(url);
+});
 
 function createWindow() {
   const workArea = screen.getPrimaryDisplay().workAreaSize;

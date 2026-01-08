@@ -39,17 +39,32 @@ export async function runAtomicBatchMergeByMerge(
       target,
       `Merge ${source} into ${target} [Batch Tool]`
     );
+
+    let activeMr: any; // GitLabMergeRequest
+    let isExistingMr = false;
+
     if ((mr as any).status === "error") {
-      conflicts.push({
-        type: "conflict",
+      // 尝试查找已存在的 MR
+      const existing = await client.findOpenMergeRequest(
+        projectId,
         source,
-        target,
-        reason: (mr as any).message || "创建失败",
-      });
-      log?.(`创建失败: ${(mr as any).message}`, true);
-      return await rollback(client, projectId, created, noop, conflicts, log);
-    }
-    if ((mr as any).status === "noop") {
+        target
+      );
+      if (existing) {
+        log?.(`检测到已存在的 MR !${existing.iid}，将使用该 MR 进行合并`);
+        activeMr = existing;
+        isExistingMr = true;
+      } else {
+        conflicts.push({
+          type: "conflict",
+          source,
+          target,
+          reason: (mr as any).message || "创建失败",
+        });
+        log?.(`创建失败: ${(mr as any).message}`, true);
+        return await rollback(client, projectId, created, noop, conflicts, log);
+      }
+    } else if ((mr as any).status === "noop") {
       noop.push({
         type: "noop",
         source,
@@ -58,14 +73,18 @@ export async function runAtomicBatchMergeByMerge(
       });
       log?.(`无需合并（无变更）: ${source} -> ${target}`);
       continue;
+    } else {
+      activeMr = mr;
     }
+
     created.push({
       type: "created",
       source,
       target,
-      mr: mr as any,
+      mr: activeMr,
+      isExisting: isExistingMr,
     });
-    log?.(`MR Created: IID ${(mr as any).iid}`);
+    log?.(`MR Ready: IID ${activeMr.iid}`);
   }
 
   log?.("=== 阶段 2：检测所有 MR 是否可合并 ===");
@@ -94,7 +113,62 @@ export async function runAtomicBatchMergeByMerge(
       continue;
     }
 
-    const conflictList = await client.getMergeRequestConflicts(projectId, iid);
+    let conflictApiDebug: any = null;
+    let conflictList: any[] = [];
+    try {
+      conflictList = await client.getMergeRequestConflicts(
+        projectId,
+        iid,
+        (info) => {
+          conflictApiDebug = info;
+          const parts: string[] = [];
+          parts.push(`[冲突接口诊断] ${info.method} ${info.url}`);
+          if (info.status != null) parts.push(`status=${String(info.status)}`);
+          if (info.filesCount != null)
+            parts.push(`filesCount=${String(info.filesCount)}`);
+          if (info.bodyType) parts.push(`bodyType=${info.bodyType}`);
+          if (info.error) parts.push(`error=${info.error.message}`);
+          log?.(parts.join(" | "), Boolean(info.error));
+          if (info.requestHeaders)
+            log?.(
+              `[冲突接口诊断] requestHeaders=${JSON.stringify(
+                info.requestHeaders
+              )}`,
+              false
+            );
+          if (info.responseHeaders)
+            log?.(
+              `[冲突接口诊断] responseHeaders=${JSON.stringify(
+                info.responseHeaders
+              )}`,
+              false
+            );
+          if (info.bodyKeys?.length)
+            log?.(`[冲突接口诊断] bodyKeys=${info.bodyKeys.join(",")}`, false);
+        }
+      );
+    } catch (e) {
+      log?.(`[冲突接口诊断] 获取冲突列表失败: ${String(e)}`, true);
+      conflictList = [];
+    }
+
+    if (!conflictList.length) {
+      const hasConflicts = (check as any)?.details?.has_conflicts;
+      const detailed = (check as any)?.details?.detailed_merge_status;
+      const mergeStatus = (check as any)?.details?.merge_status;
+      if (
+        hasConflicts ||
+        detailed === "conflicts" ||
+        mergeStatus === "cannot_be_merged"
+      ) {
+        log?.(
+          `冲突列表为空但 MR 标记为冲突（merge_status=${mergeStatus}, detailed=${detailed}, has_conflicts=${String(
+            hasConflicts
+          )}）。可能是二进制/大文件冲突、权限导致无法读取冲突详情，或 GitLab 端未生成 files 明细。`,
+          true
+        );
+      }
+    }
 
     if (opts?.conflictHandler) {
       log?.(
@@ -104,9 +178,12 @@ export async function runAtomicBatchMergeByMerge(
         const resolution = await opts.conflictHandler({
           projectId,
           mrIid: iid,
+          mrWebUrl: c.mr.web_url,
           source: c.source,
           target: c.target,
           conflicts: conflictList,
+          conflictApiDebug,
+          mrDetails: (check as any)?.details,
         });
         if (resolution.resolved) {
           log?.(`用户标记冲突已解决，重新检测可合并状态...`);

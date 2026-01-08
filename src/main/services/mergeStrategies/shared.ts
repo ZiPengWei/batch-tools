@@ -129,6 +129,10 @@ export async function rollback(
   for (const c of created) {
     const iid = c.mr.iid;
     if (!iid) continue;
+    if (c.isExisting) {
+      log?.(`保留已存在的 MR #${iid}`);
+      continue;
+    }
     log?.(`正在清理 MR #${iid} ...`);
     await client.deleteMergeRequest(projectId, iid);
   }

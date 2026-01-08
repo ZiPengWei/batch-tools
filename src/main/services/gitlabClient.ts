@@ -188,6 +188,13 @@ export class GitLabClient {
     return projects;
   }
 
+  async getProject(projectId: number): Promise<GitLabProject> {
+    const res = await requestWithRetry(() =>
+      this.http.get<GitLabProject>(`/api/v4/projects/${projectId}`)
+    );
+    return res.data;
+  }
+
   async getBranches(
     projectId: number,
     search?: string
@@ -251,20 +258,91 @@ export class GitLabClient {
 
   async getMergeRequestConflicts(
     projectId: number,
-    mrIid: number
+    mrIid: number,
+    diagnostic?: (info: {
+      ok: boolean;
+      method: string;
+      url: string;
+      status?: number;
+      requestHeaders?: Record<string, unknown>;
+      responseHeaders?: Record<string, unknown>;
+      error?: GitLabApiError;
+      bodyKeys?: string[];
+      bodyType?: string;
+      filesCount?: number;
+    }) => void
   ): Promise<any[]> {
-    try {
-      const res = await requestWithRetry(() =>
-        this.http.get<any>(
-          `/api/v4/projects/${projectId}/merge_requests/${mrIid}/conflicts`
-        )
-      );
-      if (res.status === 200 || res.status === 409) {
-        const data = res.data as any;
-        return Array.isArray(data?.files) ? data.files : [];
+    const sanitizeHeaders = (headers: any): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      if (!headers || typeof headers !== "object") return out;
+      for (const [k, v] of Object.entries(headers)) {
+        const key = String(k).toLowerCase();
+        if (
+          key === "private-token" ||
+          key === "authorization" ||
+          key === "cookie"
+        ) {
+          out[k] = "[REDACTED]";
+        } else {
+          out[k] = v as any;
+        }
       }
+      return out;
+    };
+
+    try {
+      const apiPath = `/api/v4/projects/${projectId}/merge_requests/${mrIid}/conflicts`;
+      const res = await requestWithRetry(() =>
+        this.http.get<any>(apiPath, {
+          validateStatus: (status) =>
+            (status >= 200 && status < 300) || status === 409,
+        })
+      );
+      const data = res.data as any;
+      diagnostic?.({
+        ok: true,
+        method: "GET",
+        url: `${this.baseUrl}${apiPath}`,
+        status: res.status,
+        requestHeaders: sanitizeHeaders((res.config as any)?.headers),
+        responseHeaders: sanitizeHeaders(res.headers),
+        bodyKeys: data && typeof data === "object" ? Object.keys(data) : [],
+        bodyType: Array.isArray(data) ? "array" : typeof data,
+        filesCount: Array.isArray(data?.files)
+          ? data.files.length
+          : Array.isArray(data)
+          ? data.length
+          : undefined,
+      });
+      if (Array.isArray(data?.files)) return data.files;
+      if (Array.isArray(data)) return data;
       return [];
-    } catch {
+    } catch (e) {
+      const err = extractErrorMessage(e);
+      const axiosErr = e as AxiosError;
+      const status = axios.isAxiosError(axiosErr)
+        ? axiosErr.response?.status
+        : undefined;
+      const apiPath = `/api/v4/projects/${projectId}/merge_requests/${mrIid}/conflicts`;
+      diagnostic?.({
+        ok: false,
+        method: "GET",
+        url: `${this.baseUrl}${apiPath}`,
+        status,
+        requestHeaders: sanitizeHeaders((axiosErr as any)?.config?.headers),
+        responseHeaders: sanitizeHeaders((axiosErr as any)?.response?.headers),
+        error: err,
+        bodyKeys:
+          err?.data && typeof err.data === "object"
+            ? Object.keys(err.data as any)
+            : [],
+        bodyType: Array.isArray(err?.data) ? "array" : typeof err?.data,
+      });
+      if (status === 401 || status === 403) {
+        throw new Error(
+          `GitLab 认证/权限异常：HTTP ${status}（无法获取冲突列表）`
+        );
+      }
       return [];
     }
   }
@@ -349,6 +427,29 @@ export class GitLabClient {
         )
       );
       return res.data;
+    } catch {
+      return null;
+    }
+  }
+
+  async findOpenMergeRequest(
+    projectId: number,
+    sourceBranch: string,
+    targetBranch: string
+  ): Promise<GitLabMergeRequest | null> {
+    try {
+      const params = {
+        source_branch: sourceBranch,
+        target_branch: targetBranch,
+        state: "opened",
+      };
+      const res = await requestWithRetry(() =>
+        this.http.get<GitLabMergeRequest[]>(
+          `/api/v4/projects/${projectId}/merge_requests`,
+          { params }
+        )
+      );
+      return res.data?.[0] || null;
     } catch {
       return null;
     }

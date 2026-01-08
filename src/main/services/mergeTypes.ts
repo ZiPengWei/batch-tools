@@ -25,6 +25,7 @@ export type MergeCreated = {
   source: string;
   target: string;
   mr: GitLabMergeRequest;
+  isExisting?: boolean;
 };
 
 export type MergeResult =
@@ -44,7 +45,10 @@ export type ConflictResolution = {
 export type ConflictHandler = (data: {
   projectId: number;
   mrIid: number;
+  mrWebUrl?: string;
   source: string;
   target: string;
   conflicts: any[];
+  conflictApiDebug?: any;
+  mrDetails?: any;
 }) => Promise<ConflictResolution>;
