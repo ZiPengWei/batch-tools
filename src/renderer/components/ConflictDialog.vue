@@ -9,6 +9,8 @@
           </div>
         </div>
         <div class="conflict-header-actions">
+          <button v-if="conflictFiles.length && compactMode" class="btn subtle small" :disabled="loading"
+            @click="toggleSidebarDrawer">{{ sidebarDrawerOpen ? '收起文件列表' : '打开文件列表' }}</button>
           <a v-if="mrWebUrl" href="#" @click.prevent="openMrLink" class="conflict-link">
             查看 MR !{{ conflictData?.mrIid }}
           </a>
@@ -27,7 +29,10 @@
 
       <div class="conflict-editor">
         <div class="conflict-body">
-          <div v-if="conflictFiles.length" class="conflict-sidebar">
+          <div v-if="conflictFiles.length && compactMode && sidebarDrawerOpen" class="sidebar-mask"
+            @click="sidebarDrawerOpen = false"></div>
+          <div v-if="conflictFiles.length" class="conflict-sidebar"
+            :class="{ drawer: compactMode, open: sidebarDrawerOpen }">
             <div class="conflict-sidebar-header">
               <div class="conflict-sidebar-title">冲突文件</div>
               <div class="conflict-sidebar-subtitle">已选择: {{ selectedCount }} / {{ conflictFiles.length }}</div>
@@ -72,15 +77,32 @@
 
           <div class="conflict-editor-main">
             <div v-if="conflictFiles.length" class="merge-panes-header">
-              <div class="merge-pane-title">本地版本（{{ target }}）</div>
-              <div class="merge-pane-title middle">合并基础（可编辑）</div>
-              <div class="merge-pane-title">远程版本（{{ source }}）</div>
+              <template v-if="compactMode">
+                <button class="merge-pane-tab" :class="{ active: visiblePane === 'left' }"
+                  @click="setVisiblePane('left')">
+                  本地（{{ target }}）
+                </button>
+                <button class="merge-pane-tab middle" :class="{ active: visiblePane === 'middle' }"
+                  @click="setVisiblePane('middle')">
+                  结果（可编辑）
+                </button>
+                <button class="merge-pane-tab" :class="{ active: visiblePane === 'right' }"
+                  @click="setVisiblePane('right')">
+                  远程（{{ source }}）
+                </button>
+              </template>
+              <template v-else>
+                <div class="merge-pane-title">本地版本（{{ target }}）</div>
+                <div class="merge-pane-title middle">合并基础（可编辑）</div>
+                <div class="merge-pane-title">远程版本（{{ source }}）</div>
+              </template>
             </div>
             <div class="conflict-editor-host">
-              <div class="pane-wrap">
+              <div class="pane-wrap" :class="{ hidden: compactMode && visiblePane !== 'left' }">
                 <div ref="editorLeftContainer" class="pane"></div>
               </div>
-              <div ref="editorMiddleWrap" class="pane-wrap middle">
+              <div ref="editorMiddleWrap" class="pane-wrap middle"
+                :class="{ hidden: compactMode && visiblePane !== 'middle' }">
                 <div ref="editorMiddleContainer" class="pane"></div>
                 <div v-if="webstormOverlayItems.length" class="webstorm-merge-overlay">
                   <div v-for="it in webstormOverlayItems" :key="it.id" class="webstorm-merge-control"
@@ -90,7 +112,7 @@
                   </div>
                 </div>
               </div>
-              <div class="pane-wrap">
+              <div class="pane-wrap" :class="{ hidden: compactMode && visiblePane !== 'right' }">
                 <div ref="editorRightContainer" class="pane"></div>
               </div>
             </div>
@@ -103,7 +125,7 @@
                 <p class="conflict-empty-subtitle">{{ fileLoadError }}</p>
               </div>
             </div>
-            <div v-else-if="conflictFiles.length === 0" class="conflict-overlay">
+            <div v-else-if="conflictFiles.length === 0" class="conflict-overlay scrollable">
               <div class="conflict-empty">
                 <p class="conflict-empty-title">未找到冲突文件</p>
                 <p class="conflict-empty-subtitle">GitLab API 返回的冲突列表为空。可能是二进制文件冲突或已被其他操作解决。</p>
@@ -254,7 +276,7 @@
               <span class="confirm-path">{{ f.new_path }}</span>
               <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-              }}</span>
+                }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
@@ -292,6 +314,11 @@ const leftEditor = shallowRef<any>();
 const middleEditor = shallowRef<any>();
 const rightEditor = shallowRef<any>();
 let activeMonaco: any = null;
+
+const viewportWidth = ref(0);
+const compactMode = computed(() => viewportWidth.value > 0 && viewportWidth.value <= 980);
+const visiblePane = ref<'left' | 'middle' | 'right'>('middle');
+const sidebarDrawerOpen = ref(false);
 
 // Shared loader logic
 let monacoInstance: any = null;
@@ -371,11 +398,28 @@ function focusPanel(which: 'left' | 'middle' | 'right') {
   if (ed?.focus) ed.focus();
 }
 
+function setVisiblePane(which: 'left' | 'middle' | 'right') {
+  visiblePane.value = which;
+  focusIndex.value = which === 'left' ? 0 : which === 'middle' ? 1 : 2;
+  queueMicrotask(() => {
+    onResize();
+    focusPanel(which);
+  });
+}
+
+function toggleSidebarDrawer() {
+  sidebarDrawerOpen.value = !sidebarDrawerOpen.value;
+  if (!sidebarDrawerOpen.value) return;
+  if (visiblePane.value !== 'middle') setVisiblePane('middle');
+}
+
 function cyclePanelFocus(dir: number) {
   const order: Array<'left' | 'middle' | 'right'> = ['left', 'middle', 'right'];
   const next = (focusIndex.value + dir + order.length) % order.length;
   focusIndex.value = next;
-  focusPanel(order[next]);
+  const which = order[next];
+  if (compactMode.value) visiblePane.value = which;
+  focusPanel(which);
 }
 
 function jumpConflict(dir: number) {
@@ -422,6 +466,10 @@ function onKeydown(e: KeyboardEvent) {
   if (loading.value) return;
   if (e.key === 'Escape') {
     e.preventDefault();
+    if (compactMode.value && sidebarDrawerOpen.value) {
+      sidebarDrawerOpen.value = false;
+      return;
+    }
     cancelMerge();
     return;
   }
@@ -473,6 +521,9 @@ function onKeydown(e: KeyboardEvent) {
 
 function onResize() {
   try {
+    viewportWidth.value = Number(window.innerWidth || 0);
+  } catch { }
+  try {
     leftEditor.value?.layout?.();
     middleEditor.value?.layout?.();
     rightEditor.value?.layout?.();
@@ -482,6 +533,7 @@ function onResize() {
 
 onMounted(() => {
   loadMonaco();
+  onResize();
   window.addEventListener('keydown', onKeydown, true);
   window.addEventListener('resize', onResize, true);
 });
@@ -645,6 +697,15 @@ watch(() => props.conflictData, async (data) => {
     }
   }
 }, { immediate: true });
+
+watch(compactMode, (isCompact) => {
+  if (!props.visible) return;
+  if (!isCompact) {
+    sidebarDrawerOpen.value = false;
+    return;
+  }
+  if (visiblePane.value !== 'middle') visiblePane.value = 'middle';
+});
 
 function addHistory(msg: string) {
   const ts = new Date();
@@ -2242,6 +2303,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .conflict-link {
@@ -2275,12 +2338,17 @@ onUnmounted(() => {
 }
 
 .conflict-sidebar {
-  width: 340px;
+  width: min(340px, 34vw);
+  min-width: 240px;
   border-right: 1px solid #e1e4e8;
   background: #ffffff;
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.sidebar-mask {
+  display: none;
 }
 
 .conflict-sidebar-header {
@@ -2422,6 +2490,36 @@ onUnmounted(() => {
   background: #ffffff;
 }
 
+.merge-pane-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #555555;
+  border-right: 1px solid #e1e4e8;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merge-pane-tab:last-child {
+  border-right: 0;
+}
+
+.merge-pane-tab.middle {
+  text-align: center;
+}
+
+.merge-pane-tab.active {
+  background: #0366d6;
+  color: #ffffff;
+}
+
 .merge-pane-title {
   padding: 8px 12px;
   font-size: 12px;
@@ -2446,13 +2544,18 @@ onUnmounted(() => {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  overflow-x: auto;
 }
 
 .pane-wrap {
   position: relative;
   flex: 1 1 0;
-  min-width: 0;
+  min-width: 320px;
   min-height: 0;
+}
+
+.pane-wrap.hidden {
+  display: none;
 }
 
 .pane {
@@ -2503,6 +2606,24 @@ onUnmounted(() => {
   z-index: 10;
   padding: 16px;
   text-align: center;
+}
+
+.conflict-overlay.scrollable {
+  overflow: auto;
+  align-items: flex-start;
+}
+
+.conflict-empty {
+  width: min(980px, 100%);
+  text-align: left;
+  margin: 8px auto 16px auto;
+}
+
+.conflict-empty-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
 }
 
 .conflict-overlay-text {
@@ -2605,6 +2726,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .btn {
@@ -2862,6 +2985,55 @@ onUnmounted(() => {
   margin-top: 6px;
   border-radius: 2px;
   background: #1890ff;
+}
+
+@media (max-width: 980px) {
+  .conflict-body {
+    position: relative;
+  }
+
+  .sidebar-mask {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 4;
+  }
+
+  .conflict-sidebar.drawer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+    border-right: 1px solid #e1e4e8;
+    transform: translateX(-102%);
+    transition: transform 160ms ease-out;
+    width: min(340px, 84vw);
+    min-width: 240px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .conflict-sidebar.drawer.open {
+    transform: translateX(0);
+  }
+
+  .merge-panes-header {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .conflict-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .conflict-footer-actions {
+    justify-content: flex-start;
+  }
+
+  .conflict-footer-left {
+    flex: 0 0 auto;
+  }
 }
 
 :deep(.conflict-line-local) {
