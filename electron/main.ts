@@ -271,10 +271,10 @@ ipcMain.handle("shell:open-external", async (_event, url: string) => {
 
 function createWindow() {
   const workArea = screen.getPrimaryDisplay().workAreaSize;
-  const minWidth = 1000;
-  const minHeight = 600;
-  const desiredWidth = 1000;
-  const desiredHeight = 600;
+  const minWidth = 1300;
+  const minHeight = 700;
+  const desiredWidth = 1300;
+  const desiredHeight = 700;
   const width = Math.max(minWidth, Math.min(desiredWidth, workArea.width));
   const height = Math.max(minHeight, Math.min(desiredHeight, workArea.height));
 
