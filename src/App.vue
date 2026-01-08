@@ -343,7 +343,7 @@ onMounted(() => {
             注意：先创建 MR 并检测是否可合并；若检测到冲突/无法确认，将回滚（删除/关闭）本次创建的 MR。
           </div>
         </div>
-        <div v-if="confirmRunning" class="dialog-text">
+        <div v-if="confirmRunning" class="dialog-text log-wrapper">
           <div v-if="conflictVisible" class="small muted"
             style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
             <span>冲突处理中：已弹出冲突解决窗口，请完成处理后继续。</span>
@@ -389,7 +389,7 @@ onMounted(() => {
             <div v-if="finishSummary?.message" class="small muted">{{ finishSummary.message }}</div>
           </template>
         </div>
-        <div class="dialog-text">
+        <div class="dialog-text log-wrapper">
           <div class="muted small">操作日志</div>
           <div class="log">
             <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">{{ l.text }}
@@ -908,9 +908,9 @@ $transition-base: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
 }
 
 .dialog {
-  width: 100%;
+  width: 90%;
   max-width: 800px;
-  min-width: 500px;
+  min-width: 320px;
   background: $bg-card;
   border-radius: $border-radius-lg;
   box-shadow: $shadow-modal;
@@ -919,13 +919,15 @@ $transition-base: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
   flex-direction: column;
   gap: 20px;
   animation: modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  max-height: 85vh;
+  max-height: 90vh;
+  overflow: hidden;
 
   .dialog-title {
     font-size: 18px;
     font-weight: 600;
     color: $text-primary;
     margin: 0;
+    flex: 0 0 auto;
   }
 
   .dialog-text {
@@ -935,6 +937,13 @@ $transition-base: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
     font-size: 14px;
     color: $text-primary;
     line-height: 1.5;
+    flex: 0 0 auto;
+    min-height: 0;
+
+    &.log-wrapper {
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
   }
 
   .dialog-actions {
@@ -942,6 +951,7 @@ $transition-base: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
     justify-content: flex-end;
     gap: 12px;
     margin-top: 8px;
+    flex: 0 0 auto;
   }
 }
 
@@ -953,7 +963,9 @@ $transition-base: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
   border: 1px solid $border-color;
   border-radius: $border-radius;
   padding: 12px;
-  height: 300px;
+  flex: 1;
+  height: auto;
+  min-height: 150px;
   overflow-y: auto;
   background: #f6f8fa;
   color: $text-primary;
