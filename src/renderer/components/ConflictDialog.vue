@@ -12,11 +12,16 @@
           <a v-if="mrWebUrl" href="#" @click.prevent="openMrLink" class="conflict-link">
             查看 MR !{{ conflictData?.mrIid }}
           </a>
+          <button class="btn subtle small" :disabled="loading || conflictCandidateCount === 0"
+            @click="jumpConflict(-1)">上一个冲突</button>
+          <button class="btn subtle small" :disabled="loading || conflictCandidateCount === 0"
+            @click="jumpConflict(1)">下一个冲突</button>
           <span class="conflict-progress">已解决: {{ resolvedCount }} / {{ totalCount }}</span>
           <span v-if="pendingActionsCount" class="conflict-progress">已暂存: {{ pendingActionsCount }}</span>
           <span class="conflict-progress">
             进度: {{ progressCurrent }} / {{ conflictFiles.length }}
           </span>
+          <span v-if="conflictBlockCount" class="conflict-progress">冲突块: {{ conflictBlockCount }}</span>
         </div>
       </div>
 
@@ -397,6 +402,21 @@ function jumpConflict(dir: number) {
   } catch { }
 }
 
+function findConflictBlockAtMiddleLine(line: number) {
+  const ln = Number(line || 0);
+  if (!ln || !Array.isArray(conflictBlocks) || conflictBlocks.length === 0) return null;
+  for (const b of conflictBlocks) {
+    const startLine = Math.max(1, Number(b.middleStart + 1));
+    const endBoundary = Math.max(0, Number(b.middleEnd));
+    if (endBoundary <= b.middleStart) {
+      if (ln === startLine) return b;
+      continue;
+    }
+    if (ln >= startLine && ln <= endBoundary) return b;
+  }
+  return null;
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (!props.visible) return;
   if (loading.value) return;
@@ -442,7 +462,11 @@ function onKeydown(e: KeyboardEvent) {
   const webstormApplyMod = isMac ? e.ctrlKey : e.altKey;
   if (webstormApplyMod && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault();
-    replaceCurrentLineFromPanel(e.key === 'ArrowLeft' ? 'left' : 'right');
+    const pos = middleEditor.value?.getPosition?.();
+    const line = Number(pos?.lineNumber || 0);
+    const block = line ? findConflictBlockAtMiddleLine(line) : null;
+    if (block?.id) applySideToBlock(e.key === 'ArrowLeft' ? 'left' : 'right', String(block.id));
+    else replaceCurrentLineFromPanel(e.key === 'ArrowLeft' ? 'left' : 'right');
     return;
   }
 }
@@ -499,6 +523,8 @@ const emptyRefreshError = ref('');
 const emptyMrRefreshLoading = ref(false);
 const emptyMrRefreshError = ref('');
 const webstormOverlayItems = ref<Array<{ id: string; line: number; top: number }>>([]);
+const conflictBlockCount = ref(0);
+const conflictCandidateCount = ref(0);
 const localGitEnabled = ref(false);
 const localGitLoading = ref(false);
 const localGitError = ref('');
@@ -1265,7 +1291,7 @@ function scheduleUpdateDecorations() {
   if (decorationDebounceTimer) clearTimeout(decorationDebounceTimer);
   decorationDebounceTimer = setTimeout(() => {
     updateLineDecorations();
-  }, 200);
+  }, 100);
 }
 
 function arraysEqual(a: string[], b: string[]) {
@@ -1727,6 +1753,8 @@ function updateLineDecorations() {
 function updateWebstormOverlay() {
   const ed = middleEditor.value;
   const wrap = editorMiddleWrap.value;
+  conflictBlockCount.value = conflictBlocks.length;
+  conflictCandidateCount.value = conflictCandidateLines.size;
   if (!ed?.getTopForLineNumber || !ed?.getScrollTop || !wrap) {
     webstormOverlayItems.value = [];
     return;
@@ -2167,7 +2195,7 @@ onUnmounted(() => {
 .conflict-modal {
   position: fixed;
   inset: 0;
-  background: rgba(220, 220, 220, 0.85);
+  background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2178,17 +2206,18 @@ onUnmounted(() => {
 .conflict-dialog {
   width: min(1400px, calc(100vw - 32px));
   height: min(900px, calc(100vh - 32px));
-  background: #f5f5f5;
+  background: #ffffff;
   border-radius: 12px;
-  border: 1px solid #d6d6d6;
+  border: 1px solid #d9d9d9;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  animation: pop 160ms ease-out;
 }
 
 .conflict-header {
   padding: 12px 14px;
-  border-bottom: 1px solid #d6d6d6;
+  border-bottom: 1px solid #e1e4e8;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2200,7 +2229,7 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 800;
   margin: 0;
-  color: #555555;
+  color: #222222;
 }
 
 .conflict-subtitle {
@@ -2247,7 +2276,7 @@ onUnmounted(() => {
 
 .conflict-sidebar {
   width: 340px;
-  border-right: 1px solid #d6d6d6;
+  border-right: 1px solid #e1e4e8;
   background: #ffffff;
   display: flex;
   flex-direction: column;
@@ -2256,8 +2285,8 @@ onUnmounted(() => {
 
 .conflict-sidebar-header {
   padding: 10px 10px 8px 10px;
-  border-bottom: 1px solid #d6d6d6;
-  background: #f5f5f5;
+  border-bottom: 1px solid #e1e4e8;
+  background: #ffffff;
 }
 
 .conflict-sidebar-title {
@@ -2291,13 +2320,13 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 6px 6px;
 }
 
 .conflict-file-row.active {
-  border-color: #a7d3ff;
-  background: rgba(167, 211, 255, 0.25);
+  border-color: #1890ff;
+  background: rgba(24, 144, 255, 0.10);
 }
 
 .conflict-file-check {
@@ -2378,7 +2407,7 @@ onUnmounted(() => {
   flex: 1 1 auto;
   min-width: 0;
   position: relative;
-  background: #f5f5f5;
+  background: #ffffff;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2389,7 +2418,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 0;
-  border-bottom: 1px solid #d6d6d6;
+  border-bottom: 1px solid #e1e4e8;
   background: #ffffff;
 }
 
@@ -2398,7 +2427,7 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 800;
   color: #555555;
-  border-right: 1px solid #d6d6d6;
+  border-right: 1px solid #e1e4e8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2449,7 +2478,7 @@ onUnmounted(() => {
   width: 22px;
   height: 18px;
   border-radius: 4px;
-  border: 1px solid #d6d6d6;
+  border: 1px solid #cfcfcf;
   background: #ffffff;
   color: #555555;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
@@ -2460,8 +2489,8 @@ onUnmounted(() => {
 }
 
 .webstorm-merge-btn:hover {
-  border-color: #a7d3ff;
-  background: #f5f5f5;
+  border-color: #1890ff;
+  background: #f6f8fa;
 }
 
 .conflict-overlay {
@@ -2470,7 +2499,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(220, 220, 220, 0.85);
+  background: rgba(0, 0, 0, 0.45);
   z-index: 10;
   padding: 16px;
   text-align: center;
@@ -2508,7 +2537,7 @@ onUnmounted(() => {
 }
 
 .conflict-empty-files-list {
-  border: 1px solid #d6d6d6;
+  border: 1px solid #e1e4e8;
   border-radius: 10px;
   padding: 10px;
   background: #ffffff;
@@ -2537,7 +2566,7 @@ onUnmounted(() => {
   padding: 0;
   margin: 0;
   cursor: pointer;
-  color: #4a86e8;
+  color: #1890ff;
   text-align: left;
   flex: 1;
   min-width: 0;
@@ -2553,7 +2582,7 @@ onUnmounted(() => {
 
 .conflict-footer {
   padding: 12px 14px;
-  border-top: 1px solid #d6d6d6;
+  border-top: 1px solid #e1e4e8;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2579,18 +2608,31 @@ onUnmounted(() => {
 }
 
 .btn {
-  border: 1px solid #d6d6d6;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
-  background: #ffffff;
-  color: #555555;
+  background: #1890ff;
+  color: #ffffff;
+  font-weight: 700;
   cursor: pointer;
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.btn:hover {
+  background: #1681e5;
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(0);
 }
 
 .btn:disabled {
-  opacity: 0.6;
+  background: #d9d9d9;
+  color: #666666;
   cursor: not-allowed;
+  transform: none;
 }
 
 .btn.small {
@@ -2606,20 +2648,26 @@ onUnmounted(() => {
 }
 
 .btn.primary {
-  background: #a7d3ff;
-  color: #334155;
-  border-color: #a7d3ff;
+  background: #1890ff;
+  color: #ffffff;
 }
 
 .btn.danger {
-  background: #ffd6d6;
-  color: #555555;
-  border-color: #ffd6d6;
+  background: #d12a2a;
+  color: #ffffff;
 }
 
 .btn.subtle {
-  background: #f5f5f5;
+  background: transparent;
+  border: 1px solid #cfcfcf;
   color: #555555;
+  font-weight: 500;
+  transition: background-color 120ms ease, transform 120ms ease, border-color 120ms ease;
+}
+
+.btn.subtle:hover {
+  background: #f6f8fa;
+  border-color: #1890ff;
 }
 
 .conflict-file-actions {
@@ -2634,7 +2682,7 @@ onUnmounted(() => {
   font-size: 12px;
   color: #555555;
   background: #ffffff;
-  border: 1px solid #d6d6d6;
+  border: 1px solid #e1e4e8;
   border-radius: 999px;
   padding: 2px 8px;
 }
@@ -2643,13 +2691,13 @@ onUnmounted(() => {
 .confirm-dialog {
   width: min(1200px, calc(100vw - 48px));
   height: min(760px, calc(100vh - 48px));
-  background: #f5f5f5;
-  border: 1px solid #d6d6d6;
+  background: #ffffff;
+  border: 1px solid #d9d9d9;
   border-radius: 12px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 18px 60px rgba(180, 180, 180, 0.35);
+  animation: pop 160ms ease-out;
 }
 
 .diff-header,
@@ -2684,7 +2732,7 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #d6d6d6;
+  border-right: 1px solid #e1e4e8;
 }
 
 .diff-panel:last-child {
@@ -2693,7 +2741,7 @@ onUnmounted(() => {
 
 .diff-panel-title {
   padding: 10px 12px;
-  border-bottom: 1px solid #d6d6d6;
+  border-bottom: 1px solid #e1e4e8;
   background: #ffffff;
   font-size: 12px;
   font-weight: 800;
@@ -2753,7 +2801,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
-  border: 1px solid #d6d6d6;
+  border: 1px solid #e1e4e8;
   border-radius: 10px;
   background: #ffffff;
   margin-bottom: 8px;
@@ -2786,13 +2834,34 @@ onUnmounted(() => {
   background: #f0fff3;
 }
 
+@keyframes pop {
+  from {
+    transform: translateY(6px) scale(0.98);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
 .confirm-actions {
   padding: 12px 14px;
-  border-top: 1px solid #d6d6d6;
+  border-top: 1px solid #e1e4e8;
   background: #ffffff;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+:deep(.conflict-glyph) {
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: #1890ff;
 }
 
 :deep(.conflict-line-local) {
