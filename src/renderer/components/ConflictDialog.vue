@@ -2596,6 +2596,7 @@ onUnmounted(() => {
   background: #f6f8fa;
 }
 
+/* Empty State Modernization */
 .conflict-overlay {
   position: absolute;
   inset: 0;
@@ -2611,66 +2612,93 @@ onUnmounted(() => {
 .conflict-overlay.scrollable {
   overflow: auto;
   align-items: flex-start;
+  background: #f8f9fa;
+  /* Light background for empty state page */
+  backdrop-filter: blur(5px);
 }
 
 .conflict-empty {
-  width: min(980px, 100%);
-  text-align: left;
-  margin: 8px auto 16px auto;
+  width: min(640px, 90%);
+  /* Narrower, more focused */
+  background: #ffffff;
+  padding: 40px;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+  border: 1px solid #eaeaea;
+  margin: 60px auto;
+  text-align: center;
 }
 
 .conflict-empty-actions {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin-top: 10px;
+  margin-top: 24px;
+  justify-content: center;
 }
 
 .conflict-overlay-text {
   font-size: 14px;
   color: #555555;
+  background: #ffffff;
+  padding: 12px 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .conflict-empty-title {
-  font-size: 16px;
+  font-size: 24px;
   font-weight: 700;
-  color: #666666;
-  margin: 0 0 6px 0;
+  color: #1f2937;
+  margin: 0 0 12px 0;
 }
 
 .conflict-empty-subtitle {
-  font-size: 12px;
-  color: #666666;
-  margin: 0;
+  font-size: 14px;
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0 0 8px 0;
 }
 
 .conflict-empty-files {
-  margin-top: 10px;
+  margin-top: 24px;
   text-align: left;
-  width: min(820px, calc(100vw - 80px));
+  width: 100%;
+  background: #f9fafb;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #f3f4f6;
 }
 
 .conflict-empty-files-title {
-  font-size: 12px;
-  color: #555555;
-  margin-bottom: 6px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .conflict-empty-files-list {
-  border: 1px solid #e1e4e8;
-  border-radius: 10px;
-  padding: 10px;
-  background: #ffffff;
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
   max-height: 220px;
   overflow: auto;
   font-size: 12px;
 }
 
 .conflict-empty-file {
-  padding: 2px 0;
-  color: #555555;
+  padding: 4px 0;
+  color: #4b5563;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.conflict-empty-file:last-child {
+  border-bottom: 0;
 }
 
 .conflict-empty-file.file-row {
@@ -2719,6 +2747,10 @@ onUnmounted(() => {
 .conflict-hint {
   font-size: 12px;
   color: #666666;
+  white-space: normal;
+  overflow-wrap: break-word;
+  min-width: 200px;
+  /* 防止文字被过度挤压 */
 }
 
 .conflict-footer-actions {
@@ -2808,6 +2840,20 @@ onUnmounted(() => {
   border: 1px solid #e1e4e8;
   border-radius: 999px;
   padding: 2px 8px;
+}
+
+/* 响应式图片与通用修正 */
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 .diff-dialog,
@@ -3025,14 +3071,76 @@ onUnmounted(() => {
   .conflict-footer {
     flex-direction: column;
     align-items: stretch;
+    gap: 12px;
   }
 
   .conflict-footer-actions {
     justify-content: flex-start;
+    width: 100%;
+  }
+
+  .conflict-footer-actions .btn {
+    flex: 1 1 auto;
+    /* 让按钮在移动端自适应宽度，易于点击 */
+    text-align: center;
+    justify-content: center;
   }
 
   .conflict-footer-left {
     flex: 0 0 auto;
+    width: 100%;
+  }
+
+  .conflict-hint {
+    display: block;
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.4;
+  }
+}
+
+@media (max-width: 768px) {
+  .conflict-dialog {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: 100%;
+    border-radius: 0;
+    border: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .conflict-modal {
+    padding: 0;
+    align-items: flex-start;
+  }
+
+  .conflict-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .conflict-title {
+    font-size: 16px;
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .conflict-subtitle {
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .conflict-header-actions {
+    width: 100%;
+    justify-content: space-between;
+    margin-top: 4px;
+  }
+
+  .pane-wrap {
+    min-width: 0;
+    /* 允许在极小窗口下缩小 */
   }
 }
 
