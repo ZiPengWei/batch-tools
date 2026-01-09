@@ -1,18 +1,89 @@
-# Vue 3 + TypeScript + Vite
+# GitLab 批量合并工具 (GitLab Batch Merge Tool)
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+这是一个基于 **Electron** + **Vue 3** 构建的桌面应用程序，旨在帮助开发者高效地在 GitLab 项目中执行多分支批量合并操作，简化发布流程中的分支管理。
 
-## Recommended IDE Setup
+## ✨ 主要特性
 
-- [VS Code](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur) + [TypeScript Vue Plugin (Volar)](https://marketplace.visualstudio.com/items?itemName=Vue.vscode-typescript-vue-plugin).
+- **可视化操作界面**: 提供直观的源分支与目标分支选择界面，支持模糊搜索，快速定位分支。
+- **智能分支管理**:
+  - 自动识别并置顶核心环境分支（如 `dev`, `test`, `gray`, `master`）。
+  - 支持多选目标分支，一次性将代码合并到多个环境。
+- **原子批量合并**: 核心合并逻辑支持原子化操作，确保合并流程的可控性。
+- **冲突处理机制**:
+  - 内置冲突检测功能。
+  - 提供可视化冲突解决弹窗 (`ConflictDialog`)，辅助处理合并冲突。
+- **实时日志反馈**: 在合并过程中实时展示操作日志，方便追踪进度和排查错误。
+- **安全认证**: 支持通过 GitLab Personal Access Token 进行安全连接与鉴权。
 
-## Type Support For `.vue` Imports in TS
+## 🛠️ 技术栈
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [TypeScript Vue Plugin (Volar)](https://marketplace.visualstudio.com/items?itemName=Vue.vscode-typescript-vue-plugin) to make the TypeScript language service aware of `.vue` types.
+本项目采用现代化的前端与桌面开发技术栈：
 
-If the standalone TypeScript plugin doesn't feel fast enough to you, Volar has also implemented a [Take Over Mode](https://github.com/johnsoncodehk/volar/discussions/471#discussioncomment-1361669) that is more performant. You can enable it by the following steps:
+- **核心框架**: [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) + [Vite](https://vitejs.dev/)
+- **桌面容器**: [Electron](https://www.electronjs.org/)
+- **状态管理**: [Pinia](https://pinia.vuejs.org/)
+- **编辑器组件**: [Monaco Editor](https://microsoft.github.io/monaco-editor/) (用于代码查看与冲突解决)
+- **单元测试**: [Vitest](https://vitest.dev/)
 
-1. Disable the built-in TypeScript Extension
-   1. Run `Extensions: Show Built-in Extensions` from VSCode's command palette
-   2. Find `TypeScript and JavaScript Language Features`, right click and select `Disable (Workspace)`
-2. Reload the VSCode window by running `Developer: Reload Window` from the command palette.
+## 🚀 开发环境设置
+
+### 前置要求
+
+- **Node.js**: 建议版本 v18 或更高
+- **包管理器**: 推荐使用 [pnpm](https://pnpm.io/) (本项目使用 `pnpm` 进行依赖管理)
+
+### 1. 安装依赖
+
+```bash
+pnpm install
+```
+
+### 2. 启动开发模式
+
+此命令将同时启动 Vite 开发服务器和 Electron 应用窗口，支持热更新。
+
+```bash
+pnpm dev
+```
+
+### 3. 构建应用
+
+构建生产环境的安装包（支持 macOS, Windows, Linux，具体取决于构建配置）。
+
+```bash
+pnpm build
+```
+
+### 4. 运行测试
+
+运行单元测试以确保功能正常。
+
+```bash
+pnpm test
+```
+
+## 📖 使用指南
+
+1.  **配置连接**: 启动应用后，输入您的 GitLab 实例地址（URL）和 Personal Access Token。
+2.  **选择项目**: 从列表中选择您要操作的 GitLab 项目。
+3.  **选择源分支**: 在左侧面板选择包含新代码的源分支（Source Branch）。
+4.  **选择目标分支**: 在右侧面板勾选一个或多个需要合并到的目标分支（Target Branches）。
+5.  **执行合并**: 点击底部的“开始批量合并”按钮。
+6.  **处理冲突**: 如果合并过程中发生冲突，应用会弹出冲突解决对话框，请根据提示解决冲突并提交。
+
+## 📂 项目结构
+
+```text
+├── electron/        # Electron 主进程代码 (Main Process)
+├── src/
+│   ├── main/        # 核心业务逻辑 (GitLab Client, Merge Service)
+│   ├── renderer/    # 渲染进程代码 (Vue Components, Stores)
+│   ├── shared/      # 前后端共享的类型定义
+│   └── ...
+├── tests/           # 单元测试文件
+└── ...
+```
+
+## 📄 License
+
+[MIT](LICENSE)
