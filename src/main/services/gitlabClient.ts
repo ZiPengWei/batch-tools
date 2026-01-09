@@ -76,6 +76,63 @@ function isNoChangeError(message: string | undefined) {
   return keys.some((k) => s.includes(k));
 }
 
+function parseProjectPathFromMrWebUrl(mrWebUrl: string): string | null {
+  try {
+    const u = new URL(mrWebUrl);
+    const p = u.pathname || "";
+    const marker = "/-/merge_requests/";
+    const idx = p.indexOf(marker);
+    if (idx <= 0) return null;
+    const projectPath = p.slice(0, idx).replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!projectPath) return null;
+    return projectPath;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeHeaders(headers: any): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!headers || typeof headers !== "object") return out;
+  for (const [k, v] of Object.entries(headers)) {
+    const key = String(k).toLowerCase();
+    if (key === "private-token" || key === "authorization" || key === "cookie")
+      out[k] = "[REDACTED]";
+    else out[k] = v as any;
+  }
+  return out;
+}
+
+function normalizeConflictFiles(list: unknown): any[] {
+  const raw = Array.isArray(list) ? list : [];
+  const out: any[] = [];
+  const seen = new Set<string>();
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const anyIt = it as any;
+    const p = String(
+      anyIt.new_path ??
+        anyIt.newPath ??
+        anyIt.file_path ??
+        anyIt.filePath ??
+        anyIt.path ??
+        anyIt.file ??
+        ""
+    ).trim();
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push({ ...anyIt, new_path: p });
+  }
+  return out;
+}
+
+function validateConflictsJsonStructure(data: unknown) {
+  if (!data || typeof data !== "object") return false;
+  const anyData = data as any;
+  return Array.isArray(anyData.files);
+}
+
 async function requestWithRetry<T>(
   fn: () => Promise<T>,
   retry: RetryConfig = defaultRetry
@@ -121,11 +178,17 @@ export class GitLabClient {
   }
 
   setToken(token: string) {
-    this.http.defaults.headers.common["PRIVATE-TOKEN"] = token;
+    const anyHttp = this.http as any;
+    if (!anyHttp.defaults) anyHttp.defaults = {};
+    if (!anyHttp.defaults.headers) anyHttp.defaults.headers = {};
+    if (!anyHttp.defaults.headers.common) anyHttp.defaults.headers.common = {};
+    anyHttp.defaults.headers.common["PRIVATE-TOKEN"] = token;
   }
 
   clearToken() {
-    delete this.http.defaults.headers.common["PRIVATE-TOKEN"];
+    const anyHttp = this.http as any;
+    if (!anyHttp.defaults?.headers?.common) return;
+    delete anyHttp.defaults.headers.common["PRIVATE-TOKEN"];
   }
 
   async verifyToken(): Promise<
@@ -272,24 +335,6 @@ export class GitLabClient {
       filesCount?: number;
     }) => void
   ): Promise<any[]> {
-    const sanitizeHeaders = (headers: any): Record<string, unknown> => {
-      const out: Record<string, unknown> = {};
-      if (!headers || typeof headers !== "object") return out;
-      for (const [k, v] of Object.entries(headers)) {
-        const key = String(k).toLowerCase();
-        if (
-          key === "private-token" ||
-          key === "authorization" ||
-          key === "cookie"
-        ) {
-          out[k] = "[REDACTED]";
-        } else {
-          out[k] = v as any;
-        }
-      }
-      return out;
-    };
-
     try {
       const apiPath = `/api/v4/projects/${projectId}/merge_requests/${mrIid}/conflicts`;
       const res = await requestWithRetry(() =>
@@ -310,11 +355,20 @@ export class GitLabClient {
         bodyType: Array.isArray(data) ? "array" : typeof data,
         filesCount: Array.isArray(data?.files)
           ? data.files.length
+          : data?.files && typeof data.files === "object"
+          ? Object.keys(data.files).length
           : Array.isArray(data)
           ? data.length
+          : Array.isArray(data?.conflicts)
+          ? data.conflicts.length
           : undefined,
       });
       if (Array.isArray(data?.files)) return data.files;
+      if (data?.files && typeof data.files === "object") {
+        const vals = Object.values(data.files as Record<string, unknown>);
+        if (vals.every((v) => v && typeof v === "object")) return vals as any[];
+      }
+      if (Array.isArray(data?.conflicts)) return data.conflicts;
       if (Array.isArray(data)) return data;
       return [];
     } catch (e) {
@@ -344,6 +398,269 @@ export class GitLabClient {
         );
       }
       return [];
+    }
+  }
+
+  async getMergeRequestConflictsJsonByMrWebUrl(
+    mrWebUrl: string,
+    mrIid: number,
+    diagnostic?: (info: {
+      ok: boolean;
+      method: string;
+      url: string;
+      status?: number;
+      requestHeaders?: Record<string, unknown>;
+      responseHeaders?: Record<string, unknown>;
+      error?: GitLabApiError;
+      bodyKeys?: string[];
+      bodyType?: string;
+      filesCount?: number;
+      structureValid?: boolean;
+    }) => void
+  ): Promise<any[]> {
+    const projectPath = parseProjectPathFromMrWebUrl(mrWebUrl);
+    if (!projectPath) {
+      diagnostic?.({
+        ok: false,
+        method: "GET",
+        url: mrWebUrl,
+        error: { status: 0, message: "无法从 mrWebUrl 解析项目路径" },
+      });
+      return [];
+    }
+    const apiPath = `/${projectPath}/-/merge_requests/${mrIid}/conflicts.json`;
+    try {
+      const res = await requestWithRetry(() =>
+        this.http.get<any>(apiPath, {
+          validateStatus: () => true,
+        })
+      );
+      const data = res.data as any;
+      const bodyKeys =
+        data && typeof data === "object" ? Object.keys(data) : [];
+      const bodyType = Array.isArray(data) ? "array" : typeof data;
+      const status = res.status;
+      const httpOk = status === 200;
+      const responseHeaders = sanitizeHeaders(res.headers);
+      const isHtml =
+        bodyType === "string" &&
+        typeof responseHeaders["content-type"] === "string" &&
+        String(responseHeaders["content-type"]).includes("text/html");
+
+      let error: GitLabApiError | undefined = undefined;
+      if (!httpOk) {
+        error = { status, message: `HTTP ${status}` };
+      } else if (isHtml) {
+        error = {
+          status,
+          message:
+            "conflicts.json 返回 HTML（可能被重定向到登录页或权限不足），无法解析冲突文件列表",
+        };
+      } else if (!validateConflictsJsonStructure(data)) {
+        error = {
+          status,
+          message: "conflicts.json 响应结构不符合预期（缺少 files 数组）",
+        };
+      }
+
+      const structureValid =
+        httpOk && !isHtml && validateConflictsJsonStructure(data);
+      const filesCount = Array.isArray(data?.files)
+        ? data.files.length
+        : data?.files && typeof data.files === "object"
+        ? Object.keys(data.files).length
+        : undefined;
+      const list = structureValid ? (data.files as unknown[]) : [];
+      const normalized = normalizeConflictFiles(list);
+
+      diagnostic?.({
+        ok: httpOk && !isHtml && structureValid,
+        method: "GET",
+        url: `${this.baseUrl}${apiPath}`,
+        status,
+        requestHeaders: sanitizeHeaders((res.config as any)?.headers),
+        responseHeaders,
+        bodyKeys,
+        bodyType,
+        filesCount,
+        error,
+        structureValid,
+      });
+
+      if (status === 401 || status === 403) {
+        throw new Error(
+          `GitLab 认证/权限异常：HTTP ${status}（无法访问 conflicts.json）`
+        );
+      }
+      if (!httpOk) return [];
+      if (isHtml) return [];
+      if (!structureValid) return [];
+      return normalized;
+    } catch (e) {
+      const err = extractErrorMessage(e);
+      const axiosErr = e as AxiosError;
+      const status = axios.isAxiosError(axiosErr)
+        ? axiosErr.response?.status
+        : undefined;
+      diagnostic?.({
+        ok: false,
+        method: "GET",
+        url: `${this.baseUrl}${apiPath}`,
+        status,
+        requestHeaders: sanitizeHeaders((axiosErr as any)?.config?.headers),
+        responseHeaders: sanitizeHeaders((axiosErr as any)?.response?.headers),
+        error: err,
+        bodyKeys:
+          err?.data && typeof err.data === "object"
+            ? Object.keys(err.data as any)
+            : [],
+        bodyType: Array.isArray(err?.data) ? "array" : typeof err?.data,
+        structureValid: false,
+      });
+      return [];
+    }
+  }
+
+  async getMergeRequestConflictForPathByMrWebUrl(
+    mrWebUrl: string,
+    mrIid: number,
+    payload: { oldPath: string; newPath: string },
+    diagnostic?: (info: {
+      ok: boolean;
+      method: string;
+      url: string;
+      status?: number;
+      requestHeaders?: Record<string, unknown>;
+      responseHeaders?: Record<string, unknown>;
+      error?: GitLabApiError;
+      bodyKeys?: string[];
+      bodyType?: string;
+    }) => void
+  ): Promise<any | null> {
+    const projectPath = parseProjectPathFromMrWebUrl(mrWebUrl);
+    if (!projectPath) return null;
+    const apiPath = `/${projectPath}/-/merge_requests/${mrIid}/conflict_for_path`;
+    try {
+      const res = await requestWithRetry(() =>
+        this.http.get<any>(apiPath, {
+          params: {
+            old_path: payload.oldPath,
+            new_path: payload.newPath,
+          },
+          validateStatus: (status) =>
+            (status >= 200 && status < 300) || status === 404,
+        })
+      );
+      const data = res.data as any;
+      diagnostic?.({
+        ok: true,
+        method: "GET",
+        url: `${this.baseUrl}${apiPath}`,
+        status: res.status,
+        requestHeaders: sanitizeHeaders((res.config as any)?.headers),
+        responseHeaders: sanitizeHeaders(res.headers),
+        bodyKeys: data && typeof data === "object" ? Object.keys(data) : [],
+        bodyType: Array.isArray(data) ? "array" : typeof data,
+      });
+      if (res.status === 404) return null;
+      return data ?? null;
+    } catch (e) {
+      const err = extractErrorMessage(e);
+      const axiosErr = e as AxiosError;
+      const status = axios.isAxiosError(axiosErr)
+        ? axiosErr.response?.status
+        : undefined;
+      diagnostic?.({
+        ok: false,
+        method: "GET",
+        url: `${this.baseUrl}${apiPath}`,
+        status,
+        requestHeaders: sanitizeHeaders((axiosErr as any)?.config?.headers),
+        responseHeaders: sanitizeHeaders((axiosErr as any)?.response?.headers),
+        error: err,
+        bodyKeys:
+          err?.data && typeof err.data === "object"
+            ? Object.keys(err.data as any)
+            : [],
+        bodyType: Array.isArray(err?.data) ? "array" : typeof err?.data,
+      });
+      return null;
+    }
+  }
+
+  async resolveMergeRequestConflictsByMrWebUrl(
+    mrWebUrl: string,
+    mrIid: number,
+    payload: { commit_message: string; files: any[] },
+    diagnostic?: (info: {
+      ok: boolean;
+      method: string;
+      url: string;
+      status?: number;
+      requestHeaders?: Record<string, unknown>;
+      responseHeaders?: Record<string, unknown>;
+      error?: GitLabApiError;
+      bodyKeys?: string[];
+      bodyType?: string;
+    }) => void
+  ): Promise<
+    | { ok: true; status: number; data: any }
+    | { ok: false; status?: number; error?: GitLabApiError; data?: any }
+  > {
+    const projectPath = parseProjectPathFromMrWebUrl(mrWebUrl);
+    if (!projectPath)
+      return { ok: false, error: { status: 0, message: "无法解析项目路径" } };
+    const apiPath = `/${projectPath}/-/merge_requests/${mrIid}/resolve_conflicts`;
+    try {
+      const res = await requestWithRetry(() =>
+        this.http.post<any>(apiPath, payload, {
+          validateStatus: (status) => status >= 200 && status < 500,
+        })
+      );
+      const data = res.data as any;
+      const ok = res.status >= 200 && res.status < 300;
+      diagnostic?.({
+        ok,
+        method: "POST",
+        url: `${this.baseUrl}${apiPath}`,
+        status: res.status,
+        requestHeaders: sanitizeHeaders((res.config as any)?.headers),
+        responseHeaders: sanitizeHeaders(res.headers),
+        bodyKeys: data && typeof data === "object" ? Object.keys(data) : [],
+        bodyType: Array.isArray(data) ? "array" : typeof data,
+      });
+      if (ok) return { ok: true, status: res.status, data };
+      return {
+        ok: false,
+        status: res.status,
+        data,
+        error: {
+          status: res.status,
+          message: `HTTP ${res.status}`,
+          data,
+        },
+      };
+    } catch (e) {
+      const err = extractErrorMessage(e);
+      const axiosErr = e as AxiosError;
+      const status = axios.isAxiosError(axiosErr)
+        ? axiosErr.response?.status
+        : undefined;
+      diagnostic?.({
+        ok: false,
+        method: "POST",
+        url: `${this.baseUrl}${apiPath}`,
+        status,
+        requestHeaders: sanitizeHeaders((axiosErr as any)?.config?.headers),
+        responseHeaders: sanitizeHeaders((axiosErr as any)?.response?.headers),
+        error: err,
+        bodyKeys:
+          err?.data && typeof err.data === "object"
+            ? Object.keys(err.data as any)
+            : [],
+        bodyType: Array.isArray(err?.data) ? "array" : typeof err?.data,
+      });
+      return { ok: false, status, error: err, data: err?.data };
     }
   }
 

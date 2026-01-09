@@ -9,6 +9,7 @@ function createClientMock() {
     getMergeRequestConflicts: vi
       .fn()
       .mockResolvedValue([{ type: "text", new_path: "conflict.txt" }]),
+    getMergeRequestConflictsJsonByMrWebUrl: vi.fn().mockResolvedValue([]),
     getMergeRequestChanges: vi
       .fn()
       .mockResolvedValue({ changes: [{ path: "x" }] }),
@@ -84,6 +85,91 @@ describe("MergeStrategy - Existing MR", () => {
           has_conflicts: true,
           detailed_merge_status: "conflicts",
           merge_status: "cannot_be_merged",
+        }),
+      })
+    );
+  });
+
+  it("冲突列表为空时应回退使用 conflicts.json 获取文件列表", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock() as any;
+
+    client.createMergeRequest.mockResolvedValueOnce({
+      iid: 2001,
+      web_url: "http://gitlab/group/proj/-/merge_requests/2001",
+    });
+
+    client.getMergeRequestConflicts.mockImplementationOnce(
+      async (_projectId: number, _mrIid: number, diagnostic?: any) => {
+        diagnostic?.({
+          ok: true,
+          method: "GET",
+          url: "http://gitlab/api/v4/projects/1/merge_requests/2001/conflicts",
+          status: 409,
+          filesCount: 0,
+          bodyType: "object",
+          bodyKeys: ["files"],
+        });
+        return [];
+      }
+    );
+
+    client.getMergeRequestConflictsJsonByMrWebUrl.mockImplementationOnce(
+      async (_mrWebUrl: string, _mrIid: number, diagnostic?: any) => {
+        diagnostic?.({
+          ok: true,
+          method: "GET",
+          url: "http://gitlab/group/proj/-/merge_requests/2001/conflicts.json",
+          status: 200,
+          filesCount: 1,
+          bodyType: "object",
+          bodyKeys: ["files"],
+        });
+        return [{ type: "text", new_path: "from_json.txt" }];
+      }
+    );
+
+    client.getMergeRequestChanges.mockResolvedValueOnce({
+      changes: [{ new_path: "from_json.txt" }],
+    });
+
+    client.getMergeRequest.mockResolvedValueOnce({
+      iid: 2001,
+      web_url: "http://gitlab/group/proj/-/merge_requests/2001",
+      merge_status: "cannot_be_merged",
+      detailed_merge_status: "conflicts",
+      has_conflicts: true,
+      state: "opened",
+      changes_count: "1",
+    });
+
+    const service = new MergeService(client);
+    const conflictHandler = vi.fn().mockResolvedValue({ resolved: false });
+
+    const p = service.runAtomicBatchMerge(
+      1,
+      [{ source: "feat", target: "main" }],
+      { conflictHandler }
+    );
+
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(res.ok).toBe(false);
+    expect(client.getMergeRequestConflictsJsonByMrWebUrl).toHaveBeenCalledWith(
+      "http://gitlab/group/proj/-/merge_requests/2001",
+      2001,
+      expect.any(Function)
+    );
+    expect(conflictHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mrIid: 2001,
+        conflicts: [{ type: "text", new_path: "from_json.txt" }],
+        conflictApiDebug: expect.objectContaining({
+          ok: true,
+          status: 409,
+          conflictsJson: expect.objectContaining({ status: 200 }),
         }),
       })
     );

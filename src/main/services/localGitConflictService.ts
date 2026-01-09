@@ -255,14 +255,29 @@ export class LocalGitConflictService {
     };
   }
 
-  async getFileContents(payload: { runId: string; filePath: string }) {
+  async getFileContents(payload: {
+    runId: string;
+    filePath: string;
+    targetPath?: string;
+    sourcePath?: string;
+    basePath?: string;
+  }) {
     const st = this.runs.get(payload.runId);
     if (!st)
       return { ok: false as const, error: "本地 git 会话不存在或已清理" };
     const filePath = payload.filePath;
-    const safePath = String(filePath || "").replace(/^\/+/, "");
+    const safeDefaultPath = String(filePath || "").replace(/^\/+/, "");
+    const safeTargetPath = String(
+      payload.targetPath || safeDefaultPath
+    ).replace(/^\/+/, "");
+    const safeSourcePath = String(
+      payload.sourcePath || safeDefaultPath
+    ).replace(/^\/+/, "");
+    const safeBasePath = String(
+      payload.basePath || payload.targetPath || safeDefaultPath
+    ).replace(/^\/+/, "");
 
-    const readAt = async (ref: string | null) => {
+    const readAt = async (ref: string | null, safePath: string) => {
       if (!ref) return "";
       const r = await this.runGit(st.repoDir, ["show", `${ref}:${safePath}`]);
       if (r.code !== 0) return "";
@@ -271,9 +286,9 @@ export class LocalGitConflictService {
     };
 
     const [base, left, right] = await Promise.all([
-      readAt(st.baseSha),
-      readAt(`origin/${st.target}`),
-      readAt(`origin/${st.source}`),
+      readAt(st.baseSha, safeBasePath),
+      readAt(`origin/${st.target}`, safeTargetPath),
+      readAt(`origin/${st.source}`, safeSourcePath),
     ]);
 
     return { ok: true as const, base, left, right, baseSha: st.baseSha };

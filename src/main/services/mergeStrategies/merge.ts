@@ -14,6 +14,51 @@ import {
   type LogFn,
 } from "./shared";
 
+function normalizeConflictFiles(list: unknown): any[] {
+  const raw = Array.isArray(list) ? list : [];
+  const out: any[] = [];
+  const seen = new Set<string>();
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const anyIt = it as any;
+    const p = String(
+      anyIt.new_path ??
+        anyIt.newPath ??
+        anyIt.file_path ??
+        anyIt.filePath ??
+        anyIt.path ??
+        anyIt.file ??
+        ""
+    ).trim();
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push({ ...anyIt, new_path: p });
+  }
+  return out;
+}
+
+function mergeConflictFiles(a: any[], b: any[]) {
+  const map = new Map<string, any>();
+  for (const it of normalizeConflictFiles(a)) {
+    map.set(String(it.new_path), it);
+  }
+  for (const it of normalizeConflictFiles(b)) {
+    const key = String(it.new_path);
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, it);
+      continue;
+    }
+    const merged: any = { ...prev };
+    for (const [k, v] of Object.entries(it)) {
+      if (v !== undefined) merged[k] = v;
+    }
+    map.set(key, merged);
+  }
+  return Array.from(map.values());
+}
+
 // merge 模式：保持现有行为（创建 MR -> 可合并检测 -> 接口触发合并 -> 等待合并完成）
 export async function runAtomicBatchMergeByMerge(
   client: GitLabClient,
@@ -150,6 +195,55 @@ export async function runAtomicBatchMergeByMerge(
     } catch (e) {
       log?.(`[冲突接口诊断] 获取冲突列表失败: ${String(e)}`, true);
       conflictList = [];
+    }
+
+    if (c.mr.web_url) {
+      try {
+        let conflictApiDebugJson: any = null;
+        const list = await client.getMergeRequestConflictsJsonByMrWebUrl(
+          c.mr.web_url,
+          iid,
+          (info) => {
+            conflictApiDebugJson = info;
+            const parts: string[] = [];
+            parts.push(
+              `[冲突接口诊断] (conflicts.json) ${info.method} ${info.url}`
+            );
+            if (info.status != null)
+              parts.push(`status=${String(info.status)}`);
+            if (info.filesCount != null)
+              parts.push(`filesCount=${String(info.filesCount)}`);
+            if (info.bodyType) parts.push(`bodyType=${info.bodyType}`);
+            if (info.structureValid != null)
+              parts.push(`structureValid=${String(info.structureValid)}`);
+            if (info.error) parts.push(`error=${info.error.message}`);
+            log?.(parts.join(" | "), Boolean(info.error));
+          }
+        );
+        if (list.length) {
+          const before = conflictList.length;
+          conflictList = mergeConflictFiles(conflictList, list);
+          conflictApiDebug = conflictApiDebugJson
+            ? {
+                ...(conflictApiDebug || {}),
+                conflictsJson: conflictApiDebugJson,
+              }
+            : conflictApiDebug;
+          if (conflictList.length > before) {
+            log?.(
+              `已通过 conflicts.json 补全冲突文件：${before} -> ${conflictList.length}`,
+              false
+            );
+          }
+        } else if (conflictApiDebugJson) {
+          conflictApiDebug = {
+            ...(conflictApiDebug || {}),
+            conflictsJson: conflictApiDebugJson,
+          };
+        }
+      } catch (e) {
+        log?.(`[冲突接口诊断] conflicts.json 回退失败: ${String(e)}`, true);
+      }
     }
 
     if (!conflictList.length) {

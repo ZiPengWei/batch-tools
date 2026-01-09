@@ -93,6 +93,32 @@ export async function getMergeRequestConflicts(payload: {
   return invoke()("gitlab:get-merge-request-conflicts", payload);
 }
 
+export async function getMergeRequestConflictsFull(payload: {
+  projectId: number;
+  mrIid: number;
+  mrWebUrl: string;
+}) {
+  return invoke()("gitlab:get-merge-request-conflicts-full", payload);
+}
+
+export async function getMergeRequestConflictForPath(payload: {
+  mrWebUrl: string;
+  mrIid: number;
+  oldPath: string;
+  newPath: string;
+}) {
+  return invoke()("gitlab:get-conflict-for-path", payload);
+}
+
+export async function resolveMergeRequestConflicts(payload: {
+  mrWebUrl: string;
+  mrIid: number;
+  commit_message: string;
+  files: any[];
+}) {
+  return invoke()("gitlab:resolve-conflicts", payload);
+}
+
 export async function getMergeRequest(payload: {
   projectId: number;
   mrIid: number;
@@ -129,6 +155,9 @@ export async function localGitPrepareConflicts(payload: {
 export async function localGitGetFileContents(payload: {
   runId: string;
   filePath: string;
+  targetPath?: string;
+  sourcePath?: string;
+  basePath?: string;
 }) {
   return invoke()("localgit:get-file-contents", payload);
 }

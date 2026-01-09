@@ -183,12 +183,16 @@ onMounted(() => {
   auth.loadLocal()
 
   onMergeConflict((data) => {
+    console.log('收到冲突事件，打开冲突解决窗口');
     conflictData.value = data
     conflictVisible.value = true
+    showConfirm.value = false
+    confirmRunning.value = false
+    showFinish.value = false
   })
 })
 </script>
-
+ 
 <template>
   <div class="page">
     <div class="container">

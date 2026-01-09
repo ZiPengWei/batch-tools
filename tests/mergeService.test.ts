@@ -200,3 +200,90 @@ describe("MergeService.runAtomicBatchMerge", () => {
     expect(res.conflicts[0]).toMatchObject({ mrIid: 3 });
   });
 });
+
+vi.mock("axios", async () => {
+  const actual = await vi.importActual<any>("axios");
+  return {
+    ...actual,
+    default: {
+      create: vi.fn(),
+      isAxiosError: (e: any) => Boolean(e && e.isAxiosError),
+    },
+    create: vi.fn(),
+    isAxiosError: (e: any) => Boolean(e && e.isAxiosError),
+  };
+});
+
+describe("GitLabClient.conflicts.json", () => {
+  it("conflicts.json 200 且包含 files 时能解析为冲突文件列表", async () => {
+    const axiosMod: any = await import("axios");
+    const get = vi.fn().mockResolvedValueOnce({
+      status: 200,
+      data: { files: [{ new_path: "a.txt" }, { new_path: "b.txt" }] },
+      headers: { "content-type": "application/json" },
+      config: { headers: { "PRIVATE-TOKEN": "t" } },
+    });
+    (axiosMod.default.create as any).mockReturnValueOnce({ get });
+
+    const { GitLabClient } = await import("../src/main/services/gitlabClient");
+    const client = new GitLabClient("http://gitlab.example", "t");
+    const diag = vi.fn();
+    const res = await client.getMergeRequestConflictsJsonByMrWebUrl(
+      "http://gitlab.example/group/proj/-/merge_requests/1291",
+      1291,
+      diag
+    );
+    expect(res.map((x: any) => x.new_path)).toEqual(["a.txt", "b.txt"]);
+    expect(diag).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true, status: 200 })
+    );
+  });
+
+  it("conflicts.json 404 时返回空列表并记录诊断", async () => {
+    const axiosMod: any = await import("axios");
+    const get = vi.fn().mockResolvedValueOnce({
+      status: 404,
+      data: { message: "Not Found" },
+      headers: { "content-type": "application/json" },
+      config: { headers: { "PRIVATE-TOKEN": "t" } },
+    });
+    (axiosMod.default.create as any).mockReturnValueOnce({ get });
+
+    const { GitLabClient } = await import("../src/main/services/gitlabClient");
+    const client = new GitLabClient("http://gitlab.example", "t");
+    const diag = vi.fn();
+    const res = await client.getMergeRequestConflictsJsonByMrWebUrl(
+      "http://gitlab.example/group/proj/-/merge_requests/1291",
+      1291,
+      diag
+    );
+    expect(res).toEqual([]);
+    expect(diag).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, status: 404 })
+    );
+  });
+
+  it("conflicts.json 200 但返回 HTML 时应当返回空列表并标记诊断失败", async () => {
+    const axiosMod: any = await import("axios");
+    const get = vi.fn().mockResolvedValueOnce({
+      status: 200,
+      data: "<html>login</html>",
+      headers: { "content-type": "text/html; charset=utf-8" },
+      config: { headers: { "PRIVATE-TOKEN": "t" } },
+    });
+    (axiosMod.default.create as any).mockReturnValueOnce({ get });
+
+    const { GitLabClient } = await import("../src/main/services/gitlabClient");
+    const client = new GitLabClient("http://gitlab.example", "t");
+    const diag = vi.fn();
+    const res = await client.getMergeRequestConflictsJsonByMrWebUrl(
+      "http://gitlab.example/group/proj/-/merge_requests/1291",
+      1291,
+      diag
+    );
+    expect(res).toEqual([]);
+    expect(diag).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, status: 200 })
+    );
+  });
+});

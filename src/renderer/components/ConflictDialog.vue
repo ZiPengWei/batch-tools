@@ -24,6 +24,23 @@
             进度: {{ progressCurrent }} / {{ conflictFiles.length }}
           </span>
           <span v-if="conflictBlockCount" class="conflict-progress">冲突块: {{ conflictBlockCount }}</span>
+          <span v-if="autoProcessedCount" class="conflict-progress">已自动处理: {{ autoProcessedCount }}</span>
+          <span v-if="zeroConflictFiles.length" class="conflict-progress">
+            {{ showAllFiles ? '无冲突文件' : '已过滤无冲突文件' }}: {{ zeroConflictFiles.length }}
+          </span>
+          <button v-if="allConflictFiles.length" class="btn subtle small" :disabled="loading"
+            @click="showAllFiles = !showAllFiles">
+            {{ showAllFiles ? '仅显示冲突文件' : '显示所有文件' }}
+          </button>
+          <span v-if="conflictCountScan.total" class="conflict-progress">
+            冲突统计: {{ conflictCountScan.done }} / {{ conflictCountScan.total }}
+          </span>
+          <span v-if="conflictCountScan.running" class="conflict-progress">
+            统计耗时: {{ conflictCountScanElapsedText }}
+          </span>
+          <span v-if="conflictCountScanMemoryText" class="conflict-progress">
+            内存: {{ conflictCountScanMemoryText }}
+          </span>
         </div>
       </div>
 
@@ -36,6 +53,14 @@
             <div class="conflict-sidebar-header">
               <div class="conflict-sidebar-title">冲突文件</div>
               <div class="conflict-sidebar-subtitle">已选择: {{ selectedCount }} / {{ conflictFiles.length }}</div>
+              <div v-if="autoProcessedCount" class="conflict-sidebar-subtitle">已自动处理无冲突文件: {{ autoProcessedCount }} 个
+              </div>
+              <div v-if="conflictListLoading" class="conflict-sidebar-subtitle">
+                <span class="mini-spinner"></span>
+                冲突列表拉取中...
+              </div>
+              <div v-if="conflictListError" class="conflict-sidebar-subtitle">{{ conflictListError }}</div>
+              <div v-if="uiError" class="conflict-sidebar-subtitle">{{ uiError }}</div>
               <div class="conflict-sidebar-actions">
                 <button class="btn subtle small" :disabled="loading" @click="selectAll">全选</button>
                 <button class="btn subtle small" :disabled="loading" @click="selectNone">全不选</button>
@@ -61,11 +86,6 @@
                 </button>
                 <div class="conflict-file-actions">
                   <button class="btn subtle tiny" :disabled="loading" @click="openDiff(f)">差异</button>
-                  <button class="btn subtle tiny" :disabled="loading" @click="applyChoiceToFile(f, 'local')">本地</button>
-                  <button class="btn subtle tiny" :disabled="loading"
-                    @click="applyChoiceToFile(f, 'remote')">远程</button>
-                  <button class="btn subtle tiny" :disabled="loading"
-                    @click="applyChoiceToFile(f, 'manual')">编辑</button>
                 </div>
               </div>
             </div>
@@ -121,13 +141,17 @@
             <div v-if="loading" class="conflict-overlay">
               <span class="conflict-overlay-text">加载文件内容中...</span>
             </div>
+            <div v-else-if="conflictCountScan.running" class="conflict-overlay">
+              <span class="conflict-overlay-text">正在统计冲突块并过滤无冲突文件...</span>
+            </div>
             <div v-else-if="fileLoadError" class="conflict-overlay">
               <div class="conflict-empty">
                 <p class="conflict-empty-title">文件加载失败</p>
                 <p class="conflict-empty-subtitle">{{ fileLoadError }}</p>
               </div>
             </div>
-            <div v-else-if="conflictFiles.length === 0" class="conflict-overlay scrollable">
+            <div v-else-if="conflictFiles.length === 0 && pendingActionsCount === 0"
+              class="conflict-overlay scrollable">
               <div class="conflict-empty">
                 <p class="conflict-empty-title">未找到冲突文件</p>
                 <p class="conflict-empty-subtitle">GitLab API 返回的冲突列表为空。可能是二进制文件冲突或已被其他操作解决。</p>
@@ -202,6 +226,12 @@
                 </div>
               </div>
             </div>
+            <div v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0" class="conflict-overlay scrollable">
+              <div class="conflict-empty">
+                <p class="conflict-empty-title">无实际冲突</p>
+                <p class="conflict-empty-subtitle">已自动生成并暂存合并结果，可直接完成合并。</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -209,13 +239,17 @@
       <div class="conflict-footer">
         <div class="conflict-footer-left">
           <span class="conflict-hint">左侧: 本地版本 ({{ target }})，中间: 合并结果，右侧: 远程版本 ({{ source }})。Tab 切换面板，Cmd/Ctrl+Enter
-            暂存并前进，Cmd/Ctrl+1/2 替换结果当前行为本地/远程，Cmd/Ctrl+Shift+1/2 替换结果选区为本地/远程，Cmd/Ctrl+Alt+1/2 插入本地/远程当前行。</span>
+            暂存并前进，Cmd/Ctrl+1/2 替换结果当前行为本地/远程，Cmd/Ctrl+Shift+1/2 替换结果选区为本地/远程。</span>
         </div>
         <div class="conflict-footer-actions">
-          <template v-if="conflictFiles.length === 0">
+          <template v-if="conflictFiles.length === 0 && pendingActionsCount === 0">
             <button class="btn danger" :disabled="loading" @click="cancelMerge">取消合并</button>
             <button class="btn primary" :disabled="loading" @click="confirmResolvedExternally">我已在 GitLab
               解决，继续检测</button>
+          </template>
+          <template v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0">
+            <button class="btn danger" :disabled="loading" @click="cancelMerge">取消合并</button>
+            <button class="btn primary" :disabled="loading" @click="openFinalConfirm">完成合并</button>
           </template>
           <template v-else>
             <button class="btn subtle" :disabled="loading" @click="acceptCurrentBranch">接受本地更改</button>
@@ -224,12 +258,7 @@
             <button class="btn subtle" :disabled="loading || gitMergeLoading" @click="applyGitThreeWayMergeToResult">
               {{ gitMergeLoading ? 'Git 合并中...' : 'Git 三方合并' }}
             </button>
-            <button class="btn subtle" :disabled="loading" @click="insertLocalLineToResult">插入本地当前行</button>
-            <button class="btn subtle" :disabled="loading" @click="insertRemoteLineToResult">插入远程当前行</button>
-            <button class="btn subtle" :disabled="loading" @click="copyLocalSelectionToResult">复制本地选中到结果</button>
-            <button class="btn subtle" :disabled="loading" @click="copyRemoteSelectionToResult">复制远程选中到结果</button>
             <button class="btn subtle" :disabled="loading" @click="undoEdit">撤销</button>
-            <button class="btn subtle" :disabled="loading" @click="redoEdit">重做</button>
             <button class="btn subtle" :disabled="loading || !isResolved(currentFile?.new_path)"
               @click="unstageCurrentFile">撤销暂存</button>
             <div class="footer-action-group">
@@ -274,19 +303,34 @@
       <div v-if="finalConfirmVisible" class="conflict-overlay">
         <div class="confirm-dialog">
           <div class="confirm-title">最终确认</div>
-          <div class="confirm-subtitle">将对以下文件提交合并结果到源分支，并标记冲突已解决。</div>
+          <div class="confirm-subtitle">可选择提交到源分支，或使用 GitLab resolve_conflicts 提交并标记冲突已解决。</div>
+          <div v-if="autoProcessedCount" class="confirm-subtitle">包含已自动处理文件，无法使用 GitLab 提交，请选择“提交到源分支”。</div>
           <div class="confirm-list">
             <div v-for="f in conflictFiles" :key="f.new_path" class="confirm-item">
               <span class="confirm-path">{{ f.new_path }}</span>
+              <span class="confirm-tag">冲突块: {{ typeof f?.conflict_block_count === 'number' && f.conflict_block_count >=
+                0 ?
+                f.conflict_block_count : '未知' }}</span>
               <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-              }}</span>
+                }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
+          <div class="confirm-commit">
+            <div class="confirm-commit-title">提交说明（commit message）</div>
+            <textarea v-model="commitMessage" class="confirm-commit-textarea" :disabled="loading"
+              placeholder="请输入提交说明"></textarea>
+            <label class="confirm-commit-row">
+              <input type="checkbox" v-model="sourceMapsToHead" :disabled="loading" />
+              <span>源分支对应 head（目标分支对应 origin）</span>
+            </label>
+          </div>
           <div class="confirm-actions">
             <button class="btn subtle" :disabled="loading" @click="finalConfirmVisible = false">返回继续编辑</button>
-            <button class="btn primary" :disabled="loading || !canFinish" @click="confirmAndCommit">确认合并并提交</button>
+            <button class="btn subtle" :disabled="loading || resolveConflictsLoading || !canResolveWithGitlab"
+              @click="confirmAndResolveConflicts">{{ resolveConflictsLoading ? '提交中...' : '使用 GitLab 提交' }}</button>
+            <button class="btn primary" :disabled="loading || !canFinish" @click="confirmAndCommit">提交到源分支</button>
           </div>
         </div>
       </div>
@@ -295,8 +339,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, onUnmounted, onMounted, toRaw } from 'vue';
-import { getFileContent, createCommit, resolveConflict, openExternal, getMergeBase, getMergeRequestChanges, getMergeRequestConflicts, getMergeRequest, localGitPrepareConflicts, localGitGetFileContents, localGitMergeFileContents, localGitCleanup } from '../ipc/bridge';
+import { ref, shallowRef, computed, watch, onUnmounted, onMounted, toRaw, nextTick, onErrorCaptured } from 'vue';
+import { getFileContent, createCommit, resolveConflict, openExternal, getMergeBase, getMergeRequestChanges, getMergeRequestConflicts, getMergeRequestConflictsFull, getMergeRequest, getMergeRequestConflictForPath, resolveMergeRequestConflicts, localGitPrepareConflicts, localGitGetFileContents, localGitMergeFileContents, localGitCleanup } from '../ipc/bridge';
 import { parseGitConflictMarkers } from '../utils/conflictMarkers';
 
 // Ensure styles are loaded
@@ -308,6 +352,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['close', 'resolved']);
+
+const useMockData = computed(() => Boolean((props.conflictData as any)?.useMockData));
 
 const editorLeftContainer = ref<HTMLElement>();
 const editorMiddleContainer = ref<HTMLElement>();
@@ -489,12 +535,6 @@ function onKeydown(e: KeyboardEvent) {
     markResolved();
     return;
   }
-  if (mod && e.altKey && (e.key === '1' || e.key === '2')) {
-    e.preventDefault();
-    if (e.key === '1') insertLocalLineToResult();
-    else insertRemoteLineToResult();
-    return;
-  }
   if (mod && e.shiftKey && (e.key === '1' || e.key === '2')) {
     e.preventDefault();
     replaceSelectionFromPanel(e.key === '1' ? 'left' : 'right');
@@ -543,8 +583,13 @@ onMounted(() => {
 });
 
 const loading = ref(false);
+const conflictListLoading = ref(false);
+const conflictListError = ref('');
+const uiError = ref('');
 const currentIndex = ref(0);
 const conflictFiles = ref<any[]>([]);
+const allConflictFiles = ref<any[]>([]);
+const zeroConflictFiles = ref<any[]>([]);
 const currentFile = ref<any>(null);
 
 const projectId = ref(0);
@@ -556,7 +601,7 @@ const leftSnapshot = ref('');
 const baseSnapshot = ref('');
 const rightSnapshot = ref('');
 const pendingActions = ref<any[]>([]);
-const fileStates = ref<Record<string, { content: string | null; undo: string[]; redo: string[] }>>({});
+const fileStates = ref<Record<string, { content: string | null; undo: string[] }>>({});
 const selectedPaths = ref<string[]>([]);
 const opHistory = ref<string[]>([]);
 const relatedFiles = ref<string[]>([]);
@@ -581,11 +626,104 @@ const emptyMrRefreshError = ref('');
 const webstormOverlayItems = ref<Array<{ id: string; line: number; top: number }>>([]);
 const conflictBlockCount = ref(0);
 const conflictCandidateCount = ref(0);
+const autoProcessedFiles = ref<Array<{ new_path: string; conflict_block_count: number }>>([]);
+const showAllFiles = ref(false);
+const deferListRenderUntilScanDone = ref(false);
+
+function getKnownConflictBlockCountForPreserve(f: any): number | null {
+  const v = (f as any)?.conflict_block_count;
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+function isZeroConflictFile(f: any) {
+  const v = (f as any)?.conflict_block_count;
+  if (v === 0) return true;
+  if (typeof v === 'string' && v.trim() === '0') return true;
+  return false;
+}
+
+function applyUiFiltersNow() {
+  if (deferListRenderUntilScanDone.value) {
+    conflictFiles.value = [];
+    return;
+  }
+  const list = Array.isArray(allConflictFiles.value) ? allConflictFiles.value : [];
+  const next = showAllFiles.value ? list : list.filter((f: any) => !isZeroConflictFile(f));
+  conflictFiles.value = next;
+  if (!showAllFiles.value) {
+    const leaked = next.filter((f: any) => isZeroConflictFile(f));
+    if (leaked.length) {
+      console.error(`过滤异常：列表中仍存在冲突块为 0 的文件：${leaked.map((x: any) => String(x?.new_path || '')).join(', ')}`);
+    }
+  }
+  if (!next.length) {
+    currentIndex.value = 0;
+    if (currentFile.value) currentFile.value = null;
+    return;
+  }
+  const curPath = String(currentFile.value?.new_path || '').trim();
+  if (curPath && !next.some((x: any) => String(x?.new_path || '').trim() === curPath)) {
+    currentFile.value = null;
+    currentIndex.value = 0;
+    return;
+  }
+  const idx = curPath ? next.findIndex((x: any) => String(x?.new_path || '').trim() === curPath) : -1;
+  if (idx >= 0) currentIndex.value = idx;
+  else currentIndex.value = Math.max(0, Math.min(currentIndex.value, next.length - 1));
+}
+
+watch(showAllFiles, () => applyUiFiltersNow());
+
+onErrorCaptured((err) => {
+  const msg = `界面错误：${String(err)}`;
+  uiError.value = msg;
+  addHistory(msg);
+  console.error('界面错误：', err);
+  return false;
+});
+type ConflictBlockScanState = {
+  running: boolean;
+  reason: string;
+  total: number;
+  done: number;
+  ok: number;
+  error: number;
+  timeout: number;
+  binary: number;
+  skipped: number;
+  startedAt: number;
+  lastUpdatedAt: number;
+};
+const conflictCountScan = ref<ConflictBlockScanState>({
+  running: false,
+  reason: '',
+  total: 0,
+  done: 0,
+  ok: 0,
+  error: 0,
+  timeout: 0,
+  binary: 0,
+  skipped: 0,
+  startedAt: 0,
+  lastUpdatedAt: 0
+});
+let conflictCountScanSeq = 0;
+let autoScanTriggeredForRunId = '';
 const localGitEnabled = ref(false);
 const localGitLoading = ref(false);
 const localGitError = ref('');
 const gitMergeLoading = ref(false);
 const gitMergeError = ref('');
+const resolveConflictsLoading = ref(false);
+const commitMessage = ref('');
+const sourceMapsToHead = ref(true);
 
 type FileChoice = 'local' | 'remote' | 'both' | 'manual';
 const fileChoices = ref<Record<string, FileChoice>>({});
@@ -601,6 +739,7 @@ const progressCurrent = computed(() =>
 );
 const pendingActionsCount = computed(() => pendingActions.value.length);
 const totalCount = computed(() => conflictFiles.value.length);
+const autoProcessedCount = computed(() => autoProcessedFiles.value.length);
 const resolvedCount = computed(() => {
   const s = new Set<string>();
   for (const a of pendingActions.value) {
@@ -612,6 +751,45 @@ const resolvedCount = computed(() => {
 const selectedCount = computed(() => selectedPaths.value.length);
 const isAllResolved = computed(() => resolvedCount.value >= totalCount.value && totalCount.value > 0);
 const canFinish = computed(() => resolvedCount.value >= totalCount.value);
+
+const conflictCountScanElapsedText = computed(() => {
+  const st = conflictCountScan.value;
+  if (!st?.startedAt) return '';
+  const ms = Math.max(0, Date.now() - st.startedAt);
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 100) / 10}s`;
+  return `${Math.round(ms / 1000)}s`;
+});
+
+const conflictCountScanMemoryText = computed(() => {
+  try {
+    const anyPerf = performance as any;
+    const mem = anyPerf?.memory;
+    const used = Number(mem?.usedJSHeapSize ?? 0);
+    if (!used) return '';
+    const mb = Math.round((used / 1024 / 1024) * 10) / 10;
+    return `${mb}MB`;
+  } catch {
+    return '';
+  }
+});
+
+const canResolveWithGitlab = computed(() => {
+  const iid = Number(props.conflictData?.mrIid || 0);
+  if (!iid) return false;
+  if (!mrWebUrl.value) return false;
+  if (!conflictFiles.value.length) return false;
+  if (autoProcessedCount.value > 0) return false;
+  const msg = String(commitMessage.value || '').trim();
+  if (!msg) return false;
+  for (const f of conflictFiles.value) {
+    const fp = String(f?.new_path || '').trim();
+    if (!fp) return false;
+    const choice = fileChoices.value[fp];
+    if (choice !== 'local' && choice !== 'remote') return false;
+  }
+  return true;
+});
 
 const emptyStateAnalysis = computed(() => {
   const lines: string[] = [];
@@ -643,6 +821,679 @@ const emptyStateAnalysis = computed(() => {
 });
 
 let emptyAutoRefreshed = false;
+let localGitAutoTriggered = false;
+let pendingOpenFile: any | null = null;
+let relatedAdhocAutoOpened = false;
+let editorInitRetryCount = 0;
+
+function normalizeConflictFiles(files: any[]): any[] {
+  const out: any[] = [];
+  const seen = new Set<string>();
+  if (!Array.isArray(files)) return out;
+  for (const raw of files) {
+    const p = String(raw?.new_path ?? '').trim();
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push({ ...(raw || {}), new_path: p });
+  }
+  return out;
+}
+
+function stageUpdateAction(filePath: string, content: string, choice?: FileChoice) {
+  const fp = String(filePath || '').trim();
+  if (!fp) return;
+  const actions = pendingActions.value.filter((a) => a?.file_path !== fp);
+  actions.push({ action: 'update', file_path: fp, content: String(content ?? '') });
+  pendingActions.value = actions;
+  if (choice) setChoice(fp, choice);
+}
+
+function countThreeWayConflictBlocks(baseText: string, leftText: string, rightText: string) {
+  const baseLines = String(baseText ?? '').split('\n');
+  const leftLines = String(leftText ?? '').split('\n');
+  const rightLines = String(rightText ?? '').split('\n');
+  const leftDiff = buildDiff(baseLines, leftLines);
+  const rightDiff = buildDiff(baseLines, rightLines);
+  const segments = buildSegments(leftDiff.edits, rightDiff.edits);
+  if (!segments.length) return 0;
+
+  let count = 0;
+  for (const seg of segments) {
+    const baseSeg = baseLines.slice(seg.start, seg.end);
+    const leftSeg = applyEditsToBaseSegment(baseLines, seg.start, seg.end, seg.l);
+    const rightSeg = applyEditsToBaseSegment(baseLines, seg.start, seg.end, seg.r);
+    const leftChanged = !arraysEqual(leftSeg, baseSeg);
+    const rightChanged = !arraysEqual(rightSeg, baseSeg);
+    if (!leftChanged || !rightChanged) continue;
+    if (arraysEqual(leftSeg, rightSeg)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  const ms = Math.max(0, Number(timeoutMs || 0));
+  if (!ms) return { ok: true as const, value: await promise };
+  let timer: any = null;
+  try {
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`超时：${ms}ms`)), ms);
+    });
+    const value = await Promise.race([promise, timedOut]);
+    return { ok: true as const, value: value as T };
+  } catch (e) {
+    const msg = String(e || '');
+    const isTimeout = msg.includes('超时：') || msg.toLowerCase().includes('timeout');
+    return { ok: false as const, error: e, timeout: isTimeout };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function runPool<T>(items: T[], limit: number, worker: (it: T) => Promise<void>) {
+  const max = Math.max(1, Number(limit || 1));
+  let idx = 0;
+  const executing = new Set<Promise<void>>();
+  const enqueue = async () => {
+    while (idx < items.length && executing.size < max) {
+      const it = items[idx++];
+      let p: Promise<void>;
+      p = (async () => {
+        await worker(it);
+      })().finally(() => executing.delete(p));
+      executing.add(p);
+    }
+    if (executing.size) {
+      await Promise.race(executing);
+      await enqueue();
+    }
+  };
+  await enqueue();
+}
+
+type ConflictWorkerAnalyzeReq = { id: number; type: 'analyze'; base: string; left: string; right: string };
+type ConflictWorkerAnalyzeRes =
+  | { id: number; ok: true; conflictCount: number; merged: string | null; computeMs: number }
+  | { id: number; ok: false; error: string };
+
+let conflictWorker: Worker | null = null;
+let conflictWorkerLoading: Promise<Worker | null> | null = null;
+let conflictWorkerReqSeq = 0;
+const conflictWorkerPending = new Map<number, { resolve: (v: ConflictWorkerAnalyzeRes) => void; reject: (e: any) => void }>();
+let conflictWorkerLoggedReady = false;
+
+function resetConflictWorker(err?: any) {
+  try {
+    conflictWorker?.terminate?.();
+  } catch { }
+  conflictWorker = null;
+  conflictWorkerLoading = null;
+  for (const [, p] of conflictWorkerPending) {
+    try {
+      p.reject(err ?? new Error('冲突计算 worker 已重置'));
+    } catch { }
+  }
+  conflictWorkerPending.clear();
+}
+
+async function getConflictWorker() {
+  if (typeof window === 'undefined') return null;
+  if (typeof Worker === 'undefined') return null;
+  if (conflictWorker) return conflictWorker;
+  if (conflictWorkerLoading) return conflictWorkerLoading;
+
+  conflictWorkerLoading = (async () => {
+    try {
+      const WorkerCtor = (await import('../workers/conflictWorker?worker')).default as any;
+      if (!WorkerCtor) {
+        console.error('加载冲突计算 worker 失败：未获取到 Worker 构造器');
+        conflictWorker = null;
+        return null;
+      }
+      const w: Worker = new WorkerCtor();
+      w.onmessage = (ev: MessageEvent<ConflictWorkerAnalyzeRes>) => {
+        const msg = ev.data as any;
+        const id = Number(msg?.id || 0);
+        const p = conflictWorkerPending.get(id);
+        if (!p) return;
+        conflictWorkerPending.delete(id);
+        p.resolve(msg as ConflictWorkerAnalyzeRes);
+      };
+      w.onerror = (e) => {
+        console.error('冲突计算 worker 出错：', e);
+        resetConflictWorker(e);
+      };
+      conflictWorker = w;
+      if (!conflictWorkerLoggedReady) {
+        conflictWorkerLoggedReady = true;
+        console.log('冲突计算 worker 已启动');
+      }
+      return w;
+    } catch (e) {
+      console.error('加载冲突计算 worker 失败：', e);
+      conflictWorker = null;
+      return null;
+    } finally {
+      conflictWorkerLoading = null;
+    }
+  })();
+
+  return conflictWorkerLoading;
+}
+
+async function computeConflictAnalysis(baseText: string, leftText: string, rightText: string) {
+  const t0 = performance.now();
+  const w = await getConflictWorker();
+  if (!w) {
+    const conflictCount = countThreeWayConflictBlocks(baseText, leftText, rightText);
+    const merged = conflictCount === 0 ? computeAutoMergeText(baseText, leftText, rightText) : null;
+    const ms = Math.round(performance.now() - t0);
+    return { conflictCount, merged, ms, fromWorker: false as const };
+  }
+  const id = ++conflictWorkerReqSeq;
+  const p = new Promise<ConflictWorkerAnalyzeRes>((resolve, reject) => {
+    conflictWorkerPending.set(id, { resolve, reject });
+  });
+  p.catch(() => { });
+  let timer: any = null;
+  try {
+    const req: ConflictWorkerAnalyzeReq = { id, type: 'analyze', base: String(baseText ?? ''), left: String(leftText ?? ''), right: String(rightText ?? '') };
+    const size = req.base.length + req.left.length + req.right.length;
+    const timeoutMs = Math.max(3000, Math.min(20000, 5000 + Math.floor(size / 20000) * 1000));
+    w.postMessage(req);
+    const res = await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err: any = new Error(`冲突计算 worker 超时：${timeoutMs}ms`);
+          err.__timeout = true;
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+    const ms = Math.round(performance.now() - t0);
+    if ((res as any)?.ok) {
+      if (ms > 2000) console.log(`冲突块统计耗时较长（worker）：${ms}ms，字符=${size}`);
+      return {
+        conflictCount: Number((res as any).conflictCount || 0),
+        merged: (res as any).merged ?? null,
+        ms,
+        fromWorker: true as const
+      };
+    }
+    throw new Error(String((res as any)?.error || '冲突计算失败'));
+  } catch (e) {
+    const msg = String(e || '');
+    const isTimeout = Boolean((e as any)?.__timeout) || msg.includes('超时：') || msg.toLowerCase().includes('timeout');
+    if (isTimeout) {
+      console.error('冲突计算 worker 超时：', e);
+      resetConflictWorker(e);
+      const conflictCount = countThreeWayConflictBlocks(baseText, leftText, rightText);
+      const merged = conflictCount === 0 ? computeAutoMergeText(baseText, leftText, rightText) : null;
+      const ms = Math.round(performance.now() - t0);
+      console.log(`冲突计算 worker 超时后已回退主线程：耗时=${ms}ms`);
+      return { conflictCount, merged, ms, fromWorker: false as const };
+    }
+    throw e;
+  } finally {
+    try {
+      if (timer) clearTimeout(timer);
+    } catch { }
+    conflictWorkerPending.delete(id);
+  }
+}
+
+async function analyzeAndApplyConflictFiles(rawFiles: any[], reason: string) {
+  const scanId = ++conflictCountScanSeq;
+  const fetchedAt = Date.now();
+  const normalized = normalizeConflictFiles(rawFiles).map((f) => {
+    const np = String(f?.new_path || '').trim();
+    return { ...(f || {}), new_path: np, conflict_block_state: 'pending', conflict_block_count: (f as any)?.conflict_block_count, __fetchedAt: fetchedAt };
+  });
+
+  autoProcessedFiles.value = [];
+  zeroConflictFiles.value = [];
+  deferListRenderUntilScanDone.value = true;
+
+  conflictCountScan.value = {
+    running: Boolean(normalized.length),
+    reason: String(reason || ''),
+    total: normalized.length,
+    done: 0,
+    ok: 0,
+    error: 0,
+    timeout: 0,
+    binary: 0,
+    skipped: 0,
+    startedAt: Date.now(),
+    lastUpdatedAt: Date.now()
+  };
+
+  if (!normalized.length) {
+    allConflictFiles.value = [];
+    conflictFiles.value = [];
+    selectedPaths.value = [];
+    deferListRenderUntilScanDone.value = false;
+    return;
+  }
+
+  allConflictFiles.value = normalized;
+  selectedPaths.value = normalized.map((f: any) => String(f?.new_path || '').trim()).filter(Boolean);
+  conflictFiles.value = [];
+  console.log(`${String(reason || '开始统计冲突块')}：待统计 ${normalized.length} 个文件`);
+
+  const autoProcessed: Array<{ new_path: string; conflict_block_count: number }> = [];
+
+  const isLocal = localGitEnabled.value;
+  const updateScan = (patch?: Partial<ConflictBlockScanState>) => {
+    if (scanId !== conflictCountScanSeq) return;
+    conflictCountScan.value = {
+      ...conflictCountScan.value,
+      ...(patch || {}),
+      lastUpdatedAt: Date.now()
+    };
+  };
+  let baseCommit: string | null = null;
+  if (!isLocal) {
+    const baseRes = await withTimeout(
+      getMergeBase({ projectId: projectId.value, refs: [source.value, target.value] }) as any,
+      12_000
+    );
+    if (scanId !== conflictCountScanSeq) return;
+    if (baseRes.ok) baseCommit = (baseRes.value as any) as any;
+    else {
+      baseCommit = null;
+      addHistory(`获取 merge base 失败：${String((baseRes as any).error || '')}`);
+      console.error('获取 merge base 失败：', (baseRes as any).error);
+    }
+  }
+
+  if (!isLocal && !baseCommit) {
+    for (const f of normalized) {
+      (f as any).conflict_block_state = 'error';
+      if (getKnownConflictBlockCountForPreserve(f) == null) (f as any).conflict_block_count = undefined;
+    }
+    deferListRenderUntilScanDone.value = false;
+    applyUiFiltersNow();
+    selectedPaths.value = conflictFiles.value.map((f: any) => String(f?.new_path || '').trim()).filter(Boolean);
+    updateScan({ running: false, done: normalized.length, error: normalized.length });
+    addHistory(`${reason}：无法获取 merge base，已跳过冲突块统计（保留文件列表）`);
+    console.log(`${reason}：无法获取 merge base，已跳过冲突块统计（保留文件列表）`);
+    if (props.visible && !currentFile.value && conflictFiles.value.length) {
+      pendingOpenFile = conflictFiles.value[0];
+      await maybeOpenPendingFile();
+    }
+    return;
+  }
+
+  const fileFetchTimeoutMs = isLocal ? 25_000 : 25_000;
+  const concurrency = isLocal ? 2 : 3;
+
+  const removeFromVisible = async (path: string) => {
+    const fp = String(path || '').trim();
+    if (!fp) return;
+    selectedPaths.value = selectedPaths.value.filter((p) => p !== fp);
+    const removedCurrent = currentFile.value?.new_path === fp;
+    if (removedCurrent) {
+      currentFile.value = null;
+    }
+    applyUiFiltersNow();
+    if (removedCurrent && conflictFiles.value.length) {
+      pendingOpenFile = conflictFiles.value[currentIndex.value] || conflictFiles.value[0];
+      await maybeOpenPendingFile();
+    }
+  };
+
+  await runPool(normalized, concurrency, async (file) => {
+    if (!props.visible) return;
+    if (scanId !== conflictCountScanSeq) return;
+
+    const newPath = String((file as any)?.new_path || '').trim();
+    const oldPath = String((file as any)?.old_path || '').trim();
+    const targetPath = (oldPath || newPath).trim();
+    const sourcePath = (newPath || oldPath).trim();
+    const basePath = (oldPath || newPath).trim();
+    const filePath = sourcePath || targetPath;
+    if (!filePath) {
+      (file as any).conflict_block_state = 'skipped';
+      updateScan({ done: conflictCountScan.value.done + 1, skipped: conflictCountScan.value.skipped + 1 });
+      return;
+    }
+
+    if (isBinaryCandidate(newPath)) {
+      (file as any).conflict_block_state = 'binary';
+      if (getKnownConflictBlockCountForPreserve(file) == null) (file as any).conflict_block_count = undefined;
+      updateScan({ done: conflictCountScan.value.done + 1, binary: conflictCountScan.value.binary + 1 });
+      addHistory(`按扩展名跳过二进制文件统计：${newPath}`);
+      return;
+    }
+
+    try {
+      let targetContent = '';
+      let sourceContent = '';
+      let baseContent = '';
+
+      if (isLocal) {
+        const res = await withTimeout(
+          localGitGetFileContents({
+            runId: runId.value,
+            filePath,
+            targetPath,
+            sourcePath,
+            basePath,
+          }) as any,
+          fileFetchTimeoutMs
+        );
+        if (!res.ok) throw Object.assign(new Error('本地读取文件失败'), { __timeout: Boolean((res as any).timeout), __cause: (res as any).error });
+        const anyRes = res.value as any;
+        if (!anyRes?.ok) throw new Error(String(anyRes?.error || '本地读取文件失败'));
+        targetContent = String(anyRes.left ?? '');
+        sourceContent = String(anyRes.right ?? '');
+        baseContent = String(anyRes.base ?? '');
+      } else {
+        const getWithFallback = async (ref: string, primary: string, fallback: string) => {
+          const primaryRes = await withTimeout(
+            getFileContent({ projectId: projectId.value, filePath: primary, ref }) as any,
+            fileFetchTimeoutMs
+          );
+          if (primaryRes.ok) return { ok: true as const, path: primary, content: String(primaryRes.value ?? '') };
+          if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: (primaryRes as any).error, timeout: Boolean((primaryRes as any).timeout) };
+          const fallbackRes = await withTimeout(
+            getFileContent({ projectId: projectId.value, filePath: fallback, ref }) as any,
+            fileFetchTimeoutMs
+          );
+          if (fallbackRes.ok) return { ok: true as const, path: fallback, content: String(fallbackRes.value ?? '') };
+          return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: (fallbackRes as any).error, timeout: Boolean((fallbackRes as any).timeout) };
+        };
+
+        const [tgtRes, srcRes] = await Promise.all([
+          getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+          getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+        ]);
+        if (!tgtRes.ok || !srcRes.ok) {
+          const isTimeout = Boolean((tgtRes as any)?.timeout || (srcRes as any)?.timeout);
+          const which = !tgtRes.ok && !srcRes.ok ? '目标/源分支均无法读取' : !tgtRes.ok ? '目标分支无法读取' : '源分支无法读取';
+          const err = new Error(`${which}：${filePath}`);
+          (err as any).__timeout = isTimeout;
+          throw err;
+        }
+
+        targetContent = String((tgtRes as any).content ?? '');
+        sourceContent = String((srcRes as any).content ?? '');
+
+        if (baseCommit) {
+          const baseRes1 = await withTimeout(
+            getFileContent({ projectId: projectId.value, filePath: basePath || filePath, ref: baseCommit }) as any,
+            fileFetchTimeoutMs
+          );
+          if (baseRes1.ok) {
+            baseContent = String(baseRes1.value ?? '');
+          } else {
+            const baseRes2 = sourcePath && sourcePath !== (basePath || filePath)
+              ? await withTimeout(getFileContent({ projectId: projectId.value, filePath: sourcePath, ref: baseCommit }) as any, fileFetchTimeoutMs)
+              : null;
+            if (baseRes2?.ok) baseContent = String(baseRes2.value ?? '');
+            else baseContent = '';
+          }
+        }
+      }
+
+      if (
+        (targetContent && targetContent.includes('\u0000')) ||
+        (sourceContent && sourceContent.includes('\u0000')) ||
+        (baseContent && baseContent.includes('\u0000'))
+      ) {
+        (file as any).conflict_block_state = 'binary';
+        if (getKnownConflictBlockCountForPreserve(file) == null) (file as any).conflict_block_count = undefined;
+        updateScan({ done: conflictCountScan.value.done + 1, binary: conflictCountScan.value.binary + 1 });
+        addHistory(`已识别为二进制/不可统计：${newPath}`);
+        return;
+      }
+
+      const baseLinesCount = String(baseContent ?? '').split('\n').length;
+      const targetLinesCount = String(targetContent ?? '').split('\n').length;
+      const sourceLinesCount = String(sourceContent ?? '').split('\n').length;
+      const totalLines = baseLinesCount + targetLinesCount + sourceLinesCount;
+      const maxLinesForCount = 60_000;
+      if (totalLines > maxLinesForCount) {
+        (file as any).conflict_block_state = 'skipped';
+        if (getKnownConflictBlockCountForPreserve(file) == null) (file as any).conflict_block_count = undefined;
+        updateScan({ done: conflictCountScan.value.done + 1, skipped: conflictCountScan.value.skipped + 1 });
+        addHistory(`已跳过冲突块统计（文件过大）：${newPath}，行数=${totalLines}`);
+        console.log(`已跳过冲突块统计（文件过大）：${newPath}，行数=${totalLines}`);
+        return;
+      }
+
+      const calc = await computeConflictAnalysis(baseContent, targetContent, sourceContent);
+      const conflictCount = calc.conflictCount;
+      const ms = calc.ms;
+      if (conflictCount === 0) {
+        const merged = calc.merged ?? computeAutoMergeText(baseContent, targetContent, sourceContent);
+        stageUpdateAction(newPath, merged, 'both');
+        (file as any).conflict_block_state = 'no_conflict';
+        (file as any).conflict_block_count = 0;
+        zeroConflictFiles.value.push({ ...(file as any), __filterReason: 'conflict_block_count=0' });
+        await removeFromVisible(newPath);
+        autoProcessed.push({ new_path: newPath, conflict_block_count: 0 });
+        updateScan({ done: conflictCountScan.value.done + 1, ok: conflictCountScan.value.ok + 1 });
+        if (ms > 2000) console.log(`冲突块统计耗时较长：${newPath}，${ms}ms`);
+        return;
+      }
+
+      (file as any).conflict_block_state = 'ok';
+      (file as any).conflict_block_count = conflictCount;
+      updateScan({ done: conflictCountScan.value.done + 1, ok: conflictCountScan.value.ok + 1 });
+      if (ms > 2000) console.log(`冲突块统计耗时较长：${newPath}，${ms}ms`);
+    } catch (e) {
+      const isTimeout = Boolean((e as any)?.__timeout) || String(e || '').includes('超时：');
+      (file as any).conflict_block_state = isTimeout ? 'timeout' : 'error';
+      if (getKnownConflictBlockCountForPreserve(file) == null) (file as any).conflict_block_count = undefined;
+      if (isTimeout) updateScan({ done: conflictCountScan.value.done + 1, timeout: conflictCountScan.value.timeout + 1 });
+      else updateScan({ done: conflictCountScan.value.done + 1, error: conflictCountScan.value.error + 1 });
+
+      addHistory(`冲突块统计失败：${String((file as any)?.new_path || '')}，原因：${String(e)}`);
+      console.error('冲突块统计失败：', e);
+    }
+  });
+
+  if (scanId !== conflictCountScanSeq) {
+    for (const f of normalized) {
+      const st = String((f as any).conflict_block_state || '');
+      if (st === 'pending') {
+        (f as any).conflict_block_state = 'skipped';
+        if (getKnownConflictBlockCountForPreserve(f) == null) (f as any).conflict_block_count = undefined;
+      }
+    }
+    conflictCountScan.value = {
+      ...conflictCountScan.value,
+      running: false,
+      lastUpdatedAt: Date.now()
+    };
+    deferListRenderUntilScanDone.value = false;
+    return;
+  }
+
+  autoProcessedFiles.value = autoProcessed;
+  deferListRenderUntilScanDone.value = false;
+  applyUiFiltersNow();
+  selectedPaths.value = conflictFiles.value.map((f: any) => String(f?.new_path || '').trim()).filter(Boolean);
+  updateScan({ running: false });
+  addHistory(`${reason}：显示 ${conflictFiles.value.length} 个文件，自动处理 ${autoProcessed.length} 个无冲突文件；失败 ${conflictCountScan.value.error}，超时 ${conflictCountScan.value.timeout}`);
+  console.log(`${reason}：显示 ${conflictFiles.value.length} 个文件，自动处理 ${autoProcessed.length} 个无冲突文件；失败 ${conflictCountScan.value.error}，超时 ${conflictCountScan.value.timeout}`);
+  if (!showAllFiles.value) {
+    const leaked = conflictFiles.value.filter((f: any) => isZeroConflictFile(f));
+    if (!leaked.length) console.log('过滤校验通过：列表中不存在冲突块为 0 的文件');
+    else console.error(`过滤校验失败：仍存在 ${leaked.length} 个冲突块为 0 的文件`);
+  }
+  if (props.visible && !currentFile.value && conflictFiles.value.length) {
+    pendingOpenFile = conflictFiles.value[0];
+    await maybeOpenPendingFile();
+  }
+}
+
+async function maybeOpenPendingFile() {
+  if (!props.visible) return;
+  const f = pendingOpenFile;
+  if (!f?.new_path) return;
+  await nextTick();
+  if (!props.visible) return;
+  pendingOpenFile = null;
+  await loadFileSmart(f);
+}
+
+async function fetchConflictList() {
+  const iid = Number(props.conflictData?.mrIid || 0);
+  if (!iid || !projectId.value) return [];
+  if (mrWebUrl.value) {
+    const list = await getMergeRequestConflictsFull({
+      projectId: projectId.value,
+      mrIid: iid,
+      mrWebUrl: mrWebUrl.value,
+    });
+    return Array.isArray(list) ? list : [];
+  }
+  const list = await getMergeRequestConflicts({ projectId: projectId.value, mrIid: iid });
+  return Array.isArray(list) ? list : [];
+}
+
+async function filterConflictFilesByConflictForPath(rawFiles: any[], reason: string) {
+  const iid = Number(props.conflictData?.mrIid || 0);
+  const url = String(mrWebUrl.value || '').trim();
+  if (!iid || !url) return Array.isArray(rawFiles) ? rawFiles : [];
+  const normalized = normalizeConflictFiles(Array.isArray(rawFiles) ? rawFiles : []);
+  if (!normalized.length) return [];
+
+  const kept: any[] = [];
+  const removed: string[] = [];
+  const concurrency = 4;
+  await runPool(normalized, concurrency, async (f) => {
+    const newPath = String((f as any)?.new_path || '').trim();
+    if (!newPath) return;
+    const oldPath = String((f as any)?.old_path || newPath).trim() || newPath;
+    try {
+      const res = await withTimeout(
+        getMergeRequestConflictForPath({
+          mrWebUrl: url,
+          mrIid: iid,
+          oldPath,
+          newPath,
+        }) as any,
+        12_000
+      );
+      if (!res.ok) {
+        kept.push(f);
+        return;
+      }
+      const ids = extractSectionIds((res as any).value);
+      if (ids.length) {
+        kept.push(f);
+      } else {
+        removed.push(newPath);
+      }
+    } catch {
+      kept.push(f);
+    }
+  });
+
+  if (removed.length) {
+    addHistory(`${String(reason || '冲突列表校验')}：已自动隐藏无实际冲突文件 ${removed.length} 个`);
+    console.log(`${String(reason || '冲突列表校验')}：已自动隐藏无实际冲突文件 ${removed.length} 个：${removed.slice(0, 20).join(', ')}${removed.length > 20 ? '…' : ''}`);
+  }
+
+  return kept;
+}
+
+function getConflictListCacheKey() {
+  const pid = Number(projectId.value || 0);
+  const iid = Number(props.conflictData?.mrIid || 0);
+  const url = String(mrWebUrl.value || '').trim();
+  return `conflicts:v1:${pid}:${iid}:${url}`;
+}
+
+function readConflictListCache(): any[] | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const key = getConflictListCacheKey();
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as any;
+    const ts = Number(parsed?.ts || 0);
+    const ttlMs = 120_000;
+    if (!ts || Date.now() - ts > ttlMs) return null;
+    const files = parsed?.files;
+    return Array.isArray(files) ? files : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeConflictListCache(files: any[]) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const list = Array.isArray(files) ? files : [];
+    if (!list.length) return;
+    const max = 500;
+    if (list.length > max) return;
+    const slim = list.map((f: any) => ({
+      type: f?.type,
+      new_path: f?.new_path,
+      old_path: f?.old_path,
+      sections: f?.sections,
+    }));
+    const payload = JSON.stringify({ ts: Date.now(), files: slim });
+    if (payload.length > 900_000) return;
+    localStorage.setItem(getConflictListCacheKey(), payload);
+  } catch { }
+}
+
+async function fetchAllConflicts(reason: string) {
+  if (conflictListLoading.value) return;
+  conflictListLoading.value = true;
+  conflictListError.value = '';
+  try {
+    const cached = readConflictListCache();
+    if (cached?.length) {
+      addHistory(`冲突列表缓存命中：${cached.length} 个`);
+      console.log(`冲突列表缓存命中：${cached.length} 个`);
+      const filtered = await filterConflictFilesByConflictForPath(
+        cached,
+        `${String(reason || '拉取冲突文件列表完成')}（缓存校验）`
+      );
+      await analyzeAndApplyConflictFiles(filtered, `${String(reason || '拉取冲突文件列表完成')}（缓存）`);
+      if (props.visible && !currentFile.value && conflictFiles.value.length) {
+        pendingOpenFile = conflictFiles.value[0];
+        await maybeOpenPendingFile();
+      }
+      return;
+    }
+    const files = await fetchConflictList();
+    if (Array.isArray(files) && files.length) {
+      addHistory(`已拉取冲突文件列表：${files.length} 个`);
+      console.log(`已拉取冲突文件列表：${files.length} 个`);
+      const filtered = await filterConflictFilesByConflictForPath(
+        files,
+        `${String(reason || '拉取冲突文件列表完成')}（校验）`
+      );
+      writeConflictListCache(filtered);
+      await analyzeAndApplyConflictFiles(filtered, reason || '拉取冲突文件列表完成');
+      if (props.visible && !currentFile.value && conflictFiles.value.length) {
+        pendingOpenFile = conflictFiles.value[0];
+        await maybeOpenPendingFile();
+      }
+      return;
+    }
+    addHistory('拉取冲突文件列表为空，沿用初始化列表');
+    console.log('拉取冲突文件列表为空，沿用初始化列表');
+  } catch (e) {
+    conflictListError.value = `拉取冲突文件列表失败：${String(e)}`;
+    addHistory(conflictListError.value);
+    console.error('拉取冲突文件列表失败：', e);
+  } finally {
+    conflictListLoading.value = false;
+  }
+}
+
 watch(() => props.conflictData, async (data) => {
   if (data) {
     projectId.value = data.projectId;
@@ -655,7 +1506,6 @@ watch(() => props.conflictData, async (data) => {
       runId.value = `mr-${pid}-${iid}-${Date.now()}`;
     }
     mrWebUrl.value = data.mrWebUrl || '';
-    conflictFiles.value = data.conflicts || [];
     currentIndex.value = 0;
     currentFile.value = null;
     fileLoadError.value = '';
@@ -668,23 +1518,40 @@ watch(() => props.conflictData, async (data) => {
     emptyRefreshError.value = '';
     emptyMrRefreshError.value = '';
     emptyAutoRefreshed = false;
+    localGitAutoTriggered = false;
+    relatedAdhocAutoOpened = false;
     gitattributesLoading.value = false;
     gitattributesError.value = '';
     gitattributesTarget.value = '';
     gitattributesSource.value = '';
     pendingActions.value = [];
     fileStates.value = {};
-    fileChoices.value = {};
-    selectedPaths.value = Array.isArray(data.conflicts) ? data.conflicts.map((c: any) => c?.new_path).filter((x: any) => typeof x === 'string' && x.trim()) : [];
+    selectedPaths.value = [];
+    autoProcessedFiles.value = [];
+    showAllFiles.value = false;
+    autoScanTriggeredForRunId = '';
     opHistory.value = [];
     finalConfirmVisible.value = false;
     diffVisible.value = false;
     resultModelDisposable?.dispose();
     resultModelDisposable = null;
     lastRecordedResultValue = '';
-    if (conflictFiles.value.length > 0) {
-      await loadFile(conflictFiles.value[0]);
-    } else if (data.mrIid) {
+
+    let list = Array.isArray(data.conflicts) ? data.conflicts : [];
+    void analyzeAndApplyConflictFiles(list, '初始化冲突列表');
+
+    queueMicrotask(() => {
+      if (!props.visible) return;
+      if (!conflictFiles.value.length) return;
+      if (!currentFile.value) pendingOpenFile = conflictFiles.value[0];
+      void maybeOpenPendingFile();
+    });
+
+    if (data.mrIid) {
+      void fetchAllConflicts('拉取冲突文件列表完成');
+    }
+
+    if (data.mrIid && pendingActions.value.length === 0) {
       await Promise.all([
         loadRelatedFiles(Number(data.mrIid)),
         loadGitattributes()
@@ -698,9 +1565,86 @@ watch(() => props.conflictData, async (data) => {
         emptyAutoRefreshed = true;
         await refreshConflictList();
       }
+
+      if (
+        looksConflicted &&
+        !relatedAdhocAutoOpened &&
+        !conflictFiles.value.length &&
+        pendingActions.value.length === 0 &&
+        relatedFiles.value.length
+      ) {
+        relatedAdhocAutoOpened = true;
+        const candidates = relatedFiles.value.filter((p: string) => !isBinaryCandidate(p));
+        const list = candidates.length ? candidates : relatedFiles.value.slice();
+        const first = String(list[0] || '').trim();
+        if (first) {
+          addHistory(`冲突列表为空，使用 MR 变更文件进入三方合并：${list.length} 个`);
+          console.log(`冲突列表为空，使用 MR 变更文件进入三方合并：${list.length} 个`);
+          await openAdhocMerge(first, list);
+        }
+      }
+
+      const wantAutoLocalGit = Boolean((data as any)?.autoLocalGitDetect);
+      if (
+        wantAutoLocalGit &&
+        looksConflicted &&
+        !localGitAutoTriggered &&
+        !conflictFiles.value.length &&
+        pendingActions.value.length === 0
+      ) {
+        localGitAutoTriggered = true;
+        setTimeout(() => {
+          if (!props.visible) return;
+          if (localGitLoading.value) return;
+          if (conflictFiles.value.length) return;
+          void prepareLocalGitConflicts();
+        }, 0);
+      }
     }
   }
 }, { immediate: true });
+
+async function autoScanAllConflicts(reason: string) {
+  if (!props.visible) return;
+  if (conflictCountScan.value.running) return;
+  const rid = String(runId.value || '').trim();
+  const scanDone = Boolean(conflictCountScan.value.total) && conflictCountScan.value.done >= conflictCountScan.value.total;
+  if (rid && autoScanTriggeredForRunId === rid && scanDone) return;
+
+  const iid = Number(props.conflictData?.mrIid || 0);
+  if (iid) {
+    autoScanTriggeredForRunId = rid;
+    await fetchAllConflicts(reason);
+    return;
+  }
+
+  const list = Array.isArray(allConflictFiles.value) ? allConflictFiles.value : [];
+  if (!list.length) return;
+  autoScanTriggeredForRunId = rid;
+  await analyzeAndApplyConflictFiles(list, reason);
+}
+
+watch(() => props.visible, async (v) => {
+  if (!v) return;
+  console.log('已打开冲突解决界面');
+  void autoScanAllConflicts('页面打开自动扫描');
+  if (pendingOpenFile) {
+    await maybeOpenPendingFile();
+    return;
+  }
+  if (!currentFile.value && conflictFiles.value.length) {
+    pendingOpenFile = conflictFiles.value[0];
+    await maybeOpenPendingFile();
+    return;
+  }
+  if (
+    currentFile.value &&
+    (!leftEditor.value || !middleEditor.value || !rightEditor.value)
+  ) {
+    pendingOpenFile = currentFile.value;
+    await maybeOpenPendingFile();
+  }
+});
 
 watch(compactMode, (isCompact) => {
   if (!props.visible) return;
@@ -729,6 +1673,13 @@ function setChoice(filePath: string, choice: FileChoice) {
   fileChoices.value[filePath] = choice;
 }
 
+function openFinalConfirm() {
+  if (!String(commitMessage.value || '').trim()) {
+    commitMessage.value = buildDefaultCommitMessage();
+  }
+  finalConfirmVisible.value = true;
+}
+
 function choiceLabel(filePath: string) {
   const c = fileChoices.value[filePath];
   if (c === 'local') return '本地';
@@ -751,17 +1702,17 @@ function selectUnresolved() {
   selectedPaths.value = all.filter((p: string) => !isResolved(p));
 }
 
-function openFile(file: any) {
+async function openFile(file: any) {
   if (!file?.new_path) return;
   const idx = conflictFiles.value.findIndex((f: any) => f?.new_path === file.new_path);
   if (idx >= 0) currentIndex.value = idx;
-  loadFile(file);
+  await loadFileSmart(file);
 }
 
 async function openDiff(file: any) {
   if (!file?.new_path) return;
   if (currentFile.value?.new_path !== file.new_path) {
-    await loadFile(file);
+    await loadFileSmart(file);
   }
   diffFilePath.value = file.new_path;
   diffLeft.value = leftSnapshot.value || '';
@@ -787,34 +1738,9 @@ const diffLines = computed(() => {
   return lines;
 });
 
-async function applyChoiceToFile(file: any, choice: FileChoice) {
-  if (!file?.new_path) return;
-  if (currentFile.value?.new_path !== file.new_path) {
-    await loadFile(file);
-  }
-  const fp = file.new_path;
-  if (choice === 'local') {
-    acceptCurrentBranch();
-    setChoice(fp, 'local');
-    return;
-  }
-  if (choice === 'remote') {
-    acceptTargetBranch();
-    setChoice(fp, 'remote');
-    return;
-  }
-  if (choice === 'both') {
-    acceptBothBranches();
-    setChoice(fp, 'both');
-    return;
-  }
-  setChoice(fp, 'manual');
-  focusPanel('middle');
-}
-
 function ensureFileState(filePath: string) {
   if (!Object.prototype.hasOwnProperty.call(fileStates.value, filePath)) {
-    fileStates.value[filePath] = { content: null, undo: [], redo: [] };
+    fileStates.value[filePath] = { content: null, undo: [] };
   }
   return fileStates.value[filePath];
 }
@@ -865,7 +1791,6 @@ function setResultValueWithUndo(value: string) {
   if (current === value) return;
   const st = ensureFileState(filePath);
   st.undo.push(current);
-  st.redo = [];
   applyResultValue(value);
 }
 
@@ -931,14 +1856,12 @@ async function refreshConflictList() {
   emptyRefreshLoading.value = true;
   emptyRefreshError.value = '';
   try {
-    const list = await getMergeRequestConflicts({ projectId: projectId.value, mrIid: iid });
-    const files = Array.isArray(list) ? list : [];
-    conflictFiles.value = files;
-    selectedPaths.value = files.map((f: any) => f?.new_path).filter((x: any) => typeof x === 'string' && x.trim());
+    const files = await fetchConflictList();
+    const filtered = await filterConflictFilesByConflictForPath(files, '重新拉取冲突列表成功（校验）');
     currentIndex.value = 0;
-    if (files.length) {
-      addHistory(`重新拉取冲突列表成功: ${files.length} 个文件`);
-      await loadFile(files[0]);
+    await analyzeAndApplyConflictFiles(filtered, '重新拉取冲突列表成功');
+    if (conflictFiles.value.length) {
+      await loadFileSmart(conflictFiles.value[0]);
     } else {
       addHistory('重新拉取冲突列表结果为空');
     }
@@ -978,13 +1901,11 @@ async function prepareLocalGitConflicts() {
       return;
     }
     const files = Array.isArray(res?.conflicts) ? res.conflicts : [];
-    conflictFiles.value = files;
-    selectedPaths.value = files.map((f: any) => f?.new_path).filter((x: any) => typeof x === 'string' && x.trim());
     currentIndex.value = 0;
     localGitEnabled.value = true;
-    addHistory(`本地 Git 检测完成: ${files.length} 个文件`);
-    if (files.length) {
-      await loadFile(files[0]);
+    await analyzeAndApplyConflictFiles(files, '本地 Git 检测完成');
+    if (conflictFiles.value.length) {
+      await loadFileSmart(conflictFiles.value[0]);
     } else {
       localGitError.value = '本地 Git 未检测到冲突文件（可能已无冲突或属于二进制/大文件冲突）';
     }
@@ -997,18 +1918,45 @@ async function prepareLocalGitConflicts() {
   }
 }
 
-async function openAdhocMerge(filePath: string) {
+async function openAdhocMerge(filePath: string, allFiles?: string[]) {
   const fp = String(filePath || '').trim();
   if (!fp) return;
-  const pseudo = { type: 'text', new_path: fp };
-  conflictFiles.value = [pseudo];
-  selectedPaths.value = [fp];
-  currentIndex.value = 0;
+  const all = Array.isArray(allFiles) && allFiles.length ? allFiles : [fp];
+  const seen = new Set<string>();
+  const list = all
+    .map((p) => String(p || '').trim())
+    .filter((p) => Boolean(p) && !seen.has(p) && (seen.add(p), true))
+    .map((p) => ({ type: 'text', new_path: p }));
+
+  const pickFirstOpenPath = () => {
+    const wanted = String(fp || '').trim();
+    if (wanted && !isBinaryCandidate(wanted)) return wanted;
+    const alt = list.find((f: any) => f?.new_path && !isBinaryCandidate(String(f.new_path)));
+    return String(alt?.new_path || wanted).trim();
+  };
+
+  const picked = pickFirstOpenPath();
+  const idx = list.findIndex((f: any) => f?.new_path === picked);
+  autoProcessedFiles.value = [];
+  conflictFiles.value = list.length ? list : [{ type: 'text', new_path: fp }];
+  selectedPaths.value = conflictFiles.value.map((f: any) => f?.new_path).filter((x: any) => typeof x === 'string' && x.trim());
+  currentIndex.value = idx >= 0 ? idx : 0;
   localGitEnabled.value = false;
   localGitError.value = '';
   fileLoadError.value = '';
-  addHistory(`打开三方合并: ${fp}`);
-  await loadFile(pseudo);
+  if (picked && picked !== fp) {
+    addHistory(`跳过疑似二进制文件，改为打开：${picked}`);
+    console.log(`跳过疑似二进制文件，改为打开：${picked}`);
+  }
+  addHistory(`打开三方合并: ${picked || fp}（列表：${conflictFiles.value.length}）`);
+  console.log(`打开三方合并: ${picked || fp}（列表：${conflictFiles.value.length}）`);
+  if (picked && isBinaryCandidate(picked)) {
+    fileLoadError.value = `疑似二进制/不可三方合并文件：${picked}`;
+    addHistory(fileLoadError.value);
+    return;
+  }
+  pendingOpenFile = conflictFiles.value[currentIndex.value] || conflictFiles.value[0];
+  await maybeOpenPendingFile();
 }
 
 async function applyGitThreeWayMergeToResult() {
@@ -1105,60 +2053,405 @@ function detectLanguage(filename: string): string {
   return 'plaintext';
 }
 
+function buildMockThreeWayTexts(filePath: string) {
+  const ext = String(filePath || '').split('.').pop()?.toLowerCase() || '';
+  const baseLines: string[] = [];
+  const leftLines: string[] = [];
+  const rightLines: string[] = [];
+
+  if (ext === 'json') {
+    baseLines.push('{', '  "name": "demo",', '  "version": "1.0.0"', '}');
+    leftLines.push('{', '  "name": "demo",', '  "version": "1.0.1"', '}');
+    rightLines.push('{', '  "name": "demo",', '  "version": "2.0.0"', '}');
+  } else {
+    baseLines.push('function calc(a, b) {', '  return a + b;', '}', '');
+    leftLines.push('function calc(a, b) {', '  return a - b;', '}', '');
+    rightLines.push('function calc(a, b) {', '  return a * b;', '}', '');
+  }
+
+  baseLines.push('export function demo() {', '  const x = 1;', '  return x;', '}', '');
+  leftLines.push('export function demo() {', '  const x = 2;', '  return x;', '}', '');
+  rightLines.push('export function demo() {', '  const x = 3;', '  return x;', '}', '');
+
+  return { base: baseLines.join('\n'), left: leftLines.join('\n'), right: rightLines.join('\n') };
+}
+
+async function loadFileMock(file: any) {
+  persistCurrentState();
+  loading.value = true;
+  currentFile.value = file;
+  fileLoadError.value = '';
+  baseSnapshot.value = '';
+
+  try {
+    const newPath = String(file?.new_path || '').trim();
+    const oldPath = String(file?.old_path || '').trim();
+    const targetPath = (oldPath || newPath).trim();
+    const sourcePath = (newPath || oldPath).trim();
+    const basePath = (oldPath || newPath).trim();
+    const filePath = (sourcePath || targetPath).trim();
+    if (!filePath) {
+      fileLoadError.value = '文件路径为空，无法加载。';
+      return { ok: false as const, error: fileLoadError.value };
+    }
+
+    const mock = buildMockThreeWayTexts(filePath);
+    const analysis = await computeConflictAnalysis(mock.base, mock.left, mock.right);
+    const conflictCount = Number(analysis?.conflictCount || 0);
+
+    baseSnapshot.value = mock.base;
+    leftSnapshot.value = mock.left;
+    rightSnapshot.value = mock.right;
+
+    const m = await loadMonaco();
+    if (!m) {
+      console.error('Monaco Editor 加载失败');
+      fileLoadError.value = '编辑器加载失败：无法加载 Monaco Editor。';
+      return { ok: false as const, error: fileLoadError.value };
+    }
+
+    const ready = await waitForEditorContainersReady();
+    const ok = ready
+      ? initEditors(m, filePath, mock.base, mock.left, mock.right, detectLanguage(filePath))
+      : false;
+    if (!ok) {
+      editorInitRetryCount += 1;
+      if (editorInitRetryCount <= 3) {
+        pendingOpenFile = file;
+        queueMicrotask(() => {
+          if (!props.visible) return;
+          void maybeOpenPendingFile();
+        });
+        return { ok: false as const, error: '编辑器容器尚未就绪' };
+      }
+      editorInitRetryCount = 0;
+      fileLoadError.value = '编辑器容器尚未就绪，请稍后重试。';
+      addHistory(`编辑器容器尚未就绪：${filePath}`);
+      return { ok: false as const, error: fileLoadError.value };
+    }
+    editorInitRetryCount = 0;
+    try {
+      leftEditor.value?.layout?.();
+      middleEditor.value?.layout?.();
+      rightEditor.value?.layout?.();
+    } catch { }
+
+    return {
+      ok: true as const,
+      filePath,
+      basePath,
+      targetPath,
+      sourcePath,
+      baseSha: 'mock-base',
+      base: mock.base,
+      left: mock.left,
+      right: mock.right,
+      conflict_block_count: conflictCount
+    };
+  } catch (e) {
+    fileLoadError.value = `加载文件失败：${String(e)}`;
+    console.error('加载文件失败：', e);
+    return { ok: false as const, error: fileLoadError.value };
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function loadFileSmart(file: any) {
+  if (useMockData.value) {
+    await loadFileMock(file);
+    return;
+  }
+  await loadFile(file);
+}
+
 async function loadFile(file: any) {
   persistCurrentState();
   loading.value = true;
   currentFile.value = file;
   fileLoadError.value = '';
+  baseSnapshot.value = '';
 
   try {
-    const filePath = file.new_path;
+    const newPath = String(file?.new_path || '').trim();
+    const oldPath = String(file?.old_path || '').trim();
+    const targetPath = (oldPath || newPath).trim();
+    const sourcePath = (newPath || oldPath).trim();
+    const basePath = (oldPath || newPath).trim();
+    const filePath = sourcePath || targetPath;
+    if (!filePath) {
+      fileLoadError.value = '文件路径为空，无法加载。';
+      return;
+    }
     let targetContent = '';
     let sourceContent = '';
     let baseCommit: string | null = null;
     if (localGitEnabled.value) {
-      const res = await localGitGetFileContents({ runId: runId.value, filePath });
+      const res = await localGitGetFileContents({
+        runId: runId.value,
+        filePath,
+        targetPath,
+        sourcePath,
+        basePath,
+      });
       if (!res?.ok) throw new Error(String(res?.error || '本地读取文件失败'));
       targetContent = String(res.left ?? '');
       sourceContent = String(res.right ?? '');
       baseCommit = (res.baseSha as any) ?? null;
       baseSnapshot.value = String(res.base ?? '');
     } else {
-      const [tgt, src, base] = await Promise.all([
-        getFileContent({ projectId: projectId.value, filePath, ref: target.value }).catch(() => ''),
-        getFileContent({ projectId: projectId.value, filePath, ref: source.value }).catch(() => ''),
-        getMergeBase({ projectId: projectId.value, refs: [source.value, target.value] }).catch(() => null)
+      if (!target.value || !source.value) {
+        throw new Error(`分支信息缺失：source=${String(source.value || '')}, target=${String(target.value || '')}`);
+      }
+      const getWithFallback = async (ref: string, primary: string, fallback: string) => {
+        try {
+          const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
+          return { ok: true as const, path: primary, content: String(v ?? '') };
+        } catch (e1) {
+          if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
+          try {
+            const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
+            return { ok: true as const, path: fallback, content: String(v2 ?? '') };
+          } catch (e2) {
+            return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
+          }
+        }
+      };
+
+      const [tgtRes, srcRes, base] = await Promise.all([
+        getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+        getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+        Promise.resolve(getMergeBase({ projectId: projectId.value, refs: [source.value, target.value] })).catch(() => null)
       ]);
-      targetContent = String(tgt ?? '');
-      sourceContent = String(src ?? '');
+      if (!tgtRes.ok && !srcRes.ok) {
+        fileLoadError.value = `无法加载文件内容（目标分支/源分支均读取失败）：${filePath}`;
+        addHistory(`文件读取失败：target(${target.value}) path=${tgtRes.path} err=${String((tgtRes as any).error || '')}`);
+        addHistory(`文件读取失败：source(${source.value}) path=${srcRes.path} err=${String((srcRes as any).error || '')}`);
+        return;
+      }
+      if (tgtRes.ok && tgtRes.path !== (targetPath || filePath)) {
+        addHistory(`目标分支读取路径回退：${targetPath || filePath} -> ${tgtRes.path}`);
+      }
+      if (srcRes.ok && srcRes.path !== (sourcePath || filePath)) {
+        addHistory(`源分支读取路径回退：${sourcePath || filePath} -> ${srcRes.path}`);
+      }
+      targetContent = String((tgtRes as any).content ?? '');
+      sourceContent = String((srcRes as any).content ?? '');
       baseCommit = base as any;
     }
-
-    leftSnapshot.value = targetContent;
-    rightSnapshot.value = sourceContent;
 
     let baseContent = '';
     if (localGitEnabled.value) {
       baseContent = baseSnapshot.value;
     } else {
       if (baseCommit) {
-        baseContent = await getFileContent({ projectId: projectId.value, filePath, ref: baseCommit }).catch(() => '');
+        try {
+          baseContent = await getFileContent({ projectId: projectId.value, filePath: basePath || filePath, ref: baseCommit });
+        } catch (e1) {
+          if (sourcePath && sourcePath !== (basePath || filePath)) {
+            try {
+              baseContent = await getFileContent({ projectId: projectId.value, filePath: sourcePath, ref: baseCommit });
+            } catch {
+              baseContent = '';
+            }
+          } else {
+            baseContent = '';
+          }
+        }
       }
-      baseSnapshot.value = baseContent;
     }
+    baseSnapshot.value = baseContent;
 
-    const m = await loadMonaco();
-    if (!m) {
-      console.error('Monaco Editor not loaded');
+    if (
+      (targetContent && targetContent.includes('\u0000')) ||
+      (sourceContent && sourceContent.includes('\u0000')) ||
+      (baseContent && baseContent.includes('\u0000'))
+    ) {
+      fileLoadError.value = `疑似二进制或不可显示内容：${filePath}`;
+      addHistory(fileLoadError.value);
       return;
     }
 
-    initEditors(m, filePath, baseContent, targetContent, sourceContent, detectLanguage(filePath));
+    leftSnapshot.value = targetContent;
+    rightSnapshot.value = sourceContent;
+
+    const m = await loadMonaco();
+    if (!m) {
+      console.error('Monaco Editor 加载失败');
+      fileLoadError.value = '编辑器加载失败：无法加载 Monaco Editor。';
+      return;
+    }
+
+    const ready = await waitForEditorContainersReady();
+    const ok = ready
+      ? initEditors(m, filePath, baseContent, targetContent, sourceContent, detectLanguage(filePath))
+      : false;
+    if (!ok) {
+      editorInitRetryCount += 1;
+      if (editorInitRetryCount <= 3) {
+        pendingOpenFile = file;
+        queueMicrotask(() => {
+          if (!props.visible) return;
+          void maybeOpenPendingFile();
+        });
+        return;
+      }
+      editorInitRetryCount = 0;
+      fileLoadError.value = '编辑器容器尚未就绪，请稍后重试。';
+      addHistory(`编辑器容器尚未就绪：${filePath}`);
+      return;
+    }
+    editorInitRetryCount = 0;
+    try {
+      leftEditor.value?.layout?.();
+      middleEditor.value?.layout?.();
+      rightEditor.value?.layout?.();
+    } catch { }
 
   } catch (e) {
     fileLoadError.value = `加载文件失败：${String(e)}`;
+    console.error('加载文件失败：', e);
   } finally {
     loading.value = false;
+  }
+}
+
+function buildDefaultCommitMessage() {
+  const iid = Number(props.conflictData?.mrIid || 0);
+  const list = conflictFiles.value
+    .map((f: any) => String(f?.new_path || '').trim())
+    .filter((x: string) => Boolean(x));
+  const lines: string[] = [];
+  lines.push(`解决合并冲突: ${source.value} -> ${target.value}${iid ? ` (MR !${iid})` : ''}`);
+  if (list.length) {
+    lines.push('');
+    lines.push('冲突文件:');
+    for (const p of list) lines.push(`- ${p}`);
+  }
+  return lines.join('\n');
+}
+
+function extractSectionIds(data: any): string[] {
+  const out: string[] = [];
+  const push = (v: any) => {
+    const s = String(v ?? '').trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  const tryList = (arr: any) => {
+    if (!Array.isArray(arr)) return;
+    for (const it of arr) {
+      if (it && typeof it === 'object') {
+        const anyIt = it as any;
+        if (anyIt.id != null) push(anyIt.id);
+        if (anyIt.section_id != null) push(anyIt.section_id);
+        if (anyIt.sectionId != null) push(anyIt.sectionId);
+      } else {
+        push(it);
+      }
+    }
+  };
+  const d = data as any;
+  tryList(d?.sections);
+  tryList(d?.conflict_file?.sections);
+  tryList(d?.conflictFile?.sections);
+  tryList(d?.file?.sections);
+  const obj =
+    d?.sections && typeof d.sections === 'object' && !Array.isArray(d.sections)
+      ? d.sections
+      : d?.conflict_file?.sections &&
+        typeof d.conflict_file.sections === 'object' &&
+        !Array.isArray(d.conflict_file.sections)
+        ? d.conflict_file.sections
+        : null;
+  if (obj && typeof obj === 'object') {
+    for (const k of Object.keys(obj)) push(k);
+  }
+  return out;
+}
+
+function choiceToSectionResolution(choice: FileChoice): 'head' | 'origin' | null {
+  if (choice === 'remote') return sourceMapsToHead.value ? 'head' : 'origin';
+  if (choice === 'local') return sourceMapsToHead.value ? 'origin' : 'head';
+  return null;
+}
+
+async function confirmAndResolveConflicts() {
+  if (resolveConflictsLoading.value) return;
+  const iid = Number(props.conflictData?.mrIid || 0);
+  if (!iid || !mrWebUrl.value) {
+    alert('无法使用 GitLab 提交：缺少 MR 信息（mrIid 或 mrWebUrl）。');
+    return;
+  }
+  const msg = String(commitMessage.value || '').trim();
+  if (!msg) {
+    alert('提交说明不能为空。');
+    return;
+  }
+  try {
+    resolveConflictsLoading.value = true;
+    const filesPayload: any[] = [];
+    for (const f of conflictFiles.value) {
+      const newPath = String(f?.new_path || '').trim();
+      if (!newPath) continue;
+      const oldPath = String(f?.old_path || newPath).trim() || newPath;
+      const choice = fileChoices.value[newPath];
+      const resolution = choice ? choiceToSectionResolution(choice) : null;
+      if (!resolution) {
+        alert(`文件未选择“接受本地更改/接受远程更改”，无法使用 GitLab 提交：${newPath}`);
+        return;
+      }
+      const detail = await getMergeRequestConflictForPath({
+        mrWebUrl: mrWebUrl.value,
+        mrIid: iid,
+        oldPath,
+        newPath,
+      });
+      const ids = extractSectionIds(detail);
+      if (!ids.length) {
+        alert(`未从 conflict_for_path 获取到 sections，无法提交：${newPath}`);
+        return;
+      }
+      const sections: Record<string, 'head' | 'origin'> = {};
+      for (const id of ids) sections[id] = resolution;
+      filesPayload.push({ old_path: oldPath, new_path: newPath, sections });
+    }
+    if (!filesPayload.length) {
+      alert('未生成任何文件提交数据。');
+      return;
+    }
+    const res = await resolveMergeRequestConflicts({
+      mrWebUrl: mrWebUrl.value,
+      mrIid: iid,
+      commit_message: msg,
+      files: filesPayload,
+    });
+    const ok = Boolean((res as any)?.ok);
+    if (!ok) {
+      const status = (res as any)?.status;
+      const errMsg = (res as any)?.error?.message || (res as any)?.message || '未知错误';
+      const data = (res as any)?.data;
+      let extra = '';
+      try {
+        if (data != null) extra = `\n\n响应数据:\n${JSON.stringify(data, null, 2)}`;
+      } catch { }
+      alert(`GitLab 提交失败: ${status ? `HTTP ${status}` : errMsg}${extra}`);
+      return;
+    }
+    try {
+      if (localGitEnabled.value) await localGitCleanup({ runId: runId.value });
+    } catch { }
+    await resolveConflict({
+      runId: runId.value,
+      resolution: { resolved: true }
+    });
+    emit('resolved');
+    emit('close');
+  } catch (e) {
+    const msg = e instanceof Error ? (e.stack || e.message) : String(e);
+    alert('GitLab 提交失败: ' + msg);
+  } finally {
+    resolveConflictsLoading.value = false;
+    finalConfirmVisible.value = false;
   }
 }
 
@@ -1258,6 +2551,15 @@ function ensureEditors(monaco: any) {
   return true;
 }
 
+async function waitForEditorContainersReady(tries = 12) {
+  for (let i = 0; i < tries; i++) {
+    await nextTick();
+    await Promise.resolve();
+    if (editorLeftContainer.value && editorMiddleContainer.value && editorRightContainer.value) return true;
+  }
+  return false;
+}
+
 function syncScroll(from: any, toA: any, toB: any) {
   if (!from?.getScrollTop || !from?.getScrollLeft) return;
   if (!toA?.setScrollTop || !toA?.setScrollLeft) return;
@@ -1278,7 +2580,7 @@ function syncScroll(from: any, toA: any, toB: any) {
 }
 
 function initEditors(monaco: any, filePath: string, base: string, lhs: string, rhs: string, language: string) {
-  if (!ensureEditors(monaco)) return;
+  if (!ensureEditors(monaco)) return false;
   activeMonaco = monaco;
 
   disposePerFileListeners();
@@ -1312,7 +2614,6 @@ function initEditors(monaco: any, filePath: string, base: string, lhs: string, r
       if (latest !== lastRecordedResultValue) {
         const s = ensureFileState(filePath);
         s.undo.push(lastRecordedResultValue);
-        s.redo = [];
         s.content = latest;
         lastRecordedResultValue = latest;
       }
@@ -1350,6 +2651,7 @@ function initEditors(monaco: any, filePath: string, base: string, lhs: string, r
       rightEditor.value?.layout?.();
     } catch { }
   });
+  return true;
 }
 
 function scheduleUpdateDecorations() {
@@ -1858,7 +3160,6 @@ function applySideToBlock(from: 'left' | 'right', blockId: string) {
   const before = resultModel.getValue();
   const st = ensureFileState(filePath);
   st.undo.push(before);
-  st.redo = [];
 
   const sideLines = from === 'left' ? block.leftLines : block.rightLines;
   const text = sideLines.join('\n');
@@ -1927,112 +3228,16 @@ function acceptBothBranches() {
   if (fp) setChoice(fp, 'both');
 }
 
-function copySelection(from: 'left' | 'right') {
-  const { left, right, middle } = getEditors();
-  const fromEd = from === 'left' ? left : right;
-  const toEd = middle;
-  if (!fromEd?.getSelection || !fromEd?.getModel || !toEd?.executeEdits || !toEd?.getSelection) return;
-  const sel = fromEd.getSelection();
-  const fromModel = fromEd.getModel();
-  const text = fromModel?.getValueInRange?.(sel);
-  if (typeof text !== 'string') return;
-  const filePath = getFileKey();
-  if (!filePath) return;
-  const resultModel = getMiddleModel();
-  if (!resultModel?.getValue) return;
-  const before = resultModel.getValue();
-  const st = ensureFileState(filePath);
-  st.undo.push(before);
-  st.redo = [];
-  suppressResultTracking = true;
-  try {
-    toEd.executeEdits('ui', [{ range: toEd.getSelection(), text, forceMoveMarkers: true }]);
-  } finally {
-    suppressResultTracking = false;
-  }
-  const after = resultModel.getValue();
-  st.content = after;
-  lastRecordedResultValue = after;
-  addHistory(`${from === 'left' ? '复制本地选中' : '复制远程选中'}: ${filePath}`);
-  setChoice(filePath, 'manual');
-  scheduleUpdateDecorations();
-}
-
-function copyLocalSelectionToResult() {
-  copySelection('left');
-}
-
-function copyRemoteSelectionToResult() {
-  copySelection('right');
-}
-
 function undoEdit() {
   const filePath = getFileKey();
   if (!filePath) return;
   const st = fileStates.value[filePath];
   const model = getMiddleModel();
   if (!st || !model?.getValue) return;
-  const current = model.getValue();
   const prev = st.undo.pop();
   if (typeof prev !== 'string') return;
-  st.redo.push(current);
   applyResultValue(prev);
   addHistory(`撤销: ${filePath}`);
-  scheduleUpdateDecorations();
-}
-
-function redoEdit() {
-  const filePath = getFileKey();
-  if (!filePath) return;
-  const st = fileStates.value[filePath];
-  const model = getMiddleModel();
-  if (!st || !model?.getValue) return;
-  const current = model.getValue();
-  const next = st.redo.pop();
-  if (typeof next !== 'string') return;
-  st.undo.push(current);
-  applyResultValue(next);
-  addHistory(`重做: ${filePath}`);
-  scheduleUpdateDecorations();
-}
-
-function insertLineFromPanel(from: 'left' | 'right') {
-  const { left, right, middle } = getEditors();
-  const fromEd = from === 'left' ? left : right;
-  const toEd = middle;
-  if (!fromEd?.getPosition || !fromEd?.getModel || !toEd?.getPosition || !toEd?.executeEdits) return;
-  const fromPos = fromEd.getPosition();
-  const fromModel = fromEd.getModel();
-  const toPos = toEd.getPosition();
-  if (!fromPos || !toPos) return;
-  if (!fromModel?.getLineContent) return;
-  const lineText = String(fromModel.getLineContent(fromPos.lineNumber) ?? '');
-
-  const filePath = getFileKey();
-  if (!filePath) return;
-  const resultModel = getMiddleModel();
-  if (!resultModel?.getValue) return;
-  const before = resultModel.getValue();
-  const st = ensureFileState(filePath);
-  st.undo.push(before);
-  st.redo = [];
-  suppressResultTracking = true;
-  try {
-    const range = {
-      startLineNumber: toPos.lineNumber,
-      startColumn: 1,
-      endLineNumber: toPos.lineNumber,
-      endColumn: 1
-    };
-    toEd.executeEdits('ui', [{ range, text: `${lineText}\n`, forceMoveMarkers: true }]);
-  } finally {
-    suppressResultTracking = false;
-  }
-  const after = resultModel.getValue();
-  st.content = after;
-  lastRecordedResultValue = after;
-  addHistory(`${from === 'left' ? '插入本地行' : '插入远程行'}: ${filePath}#${fromPos.lineNumber}`);
-  setChoice(filePath, 'manual');
   scheduleUpdateDecorations();
 }
 
@@ -2055,7 +3260,6 @@ function replaceCurrentLineFromPanel(from: 'left' | 'right') {
   const before = resultModel.getValue();
   const st = ensureFileState(filePath);
   st.undo.push(before);
-  st.redo = [];
   const range = {
     startLineNumber: lineNumber,
     startColumn: 1,
@@ -2106,7 +3310,6 @@ function replaceSelectionFromPanel(from: 'left' | 'right') {
   const before = resultModel.getValue();
   const st = ensureFileState(filePath);
   st.undo.push(before);
-  st.redo = [];
 
   const parts: string[] = [];
   for (let ln = startLine; ln <= endLine; ln++) {
@@ -2131,14 +3334,6 @@ function replaceSelectionFromPanel(from: 'left' | 'right') {
   addHistory(`${from === 'left' ? '替换为本地选区' : '替换为远程选区'}: ${filePath}#${startLine}-${endLine}`);
   setChoice(filePath, 'manual');
   scheduleUpdateDecorations();
-}
-
-function insertLocalLineToResult() {
-  insertLineFromPanel('left');
-}
-
-function insertRemoteLineToResult() {
-  insertLineFromPanel('right');
 }
 
 function normalizeCommitActions(list: any[]) {
@@ -2210,7 +3405,7 @@ async function markResolved() {
       const nextFile = conflictFiles.value.find((f: any) => f?.new_path === nextPath) || null;
       if (nextFile) {
         currentIndex.value = conflictFiles.value.findIndex((f: any) => f?.new_path === nextPath);
-        await loadFile(nextFile);
+        await loadFileSmart(nextFile);
         return;
       }
     }
@@ -2221,6 +3416,9 @@ async function markResolved() {
     }
 
     if (canFinish.value) {
+      if (!String(commitMessage.value || '').trim()) {
+        commitMessage.value = buildDefaultCommitMessage();
+      }
       finalConfirmVisible.value = true;
     }
   } catch (e) {
@@ -2289,6 +3487,7 @@ onUnmounted(() => {
   try {
     if (localGitEnabled.value) localGitCleanup({ runId: runId.value });
   } catch { }
+  resetConflictWorker();
   resultModelDisposable?.dispose();
   window.removeEventListener('keydown', onKeydown, true);
   window.removeEventListener('resize', onResize, true);
@@ -2794,7 +3993,7 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   left: 0;
   right: 0;
   pointer-events: none;
-  z-index: 10;
+  z-index: 100;
   overflow: hidden;
 }
 
@@ -2802,9 +4001,10 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   position: absolute;
   left: 0;
   right: 0;
-  height: 0; // Position anchor
+  height: 24px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
   padding: 0 4px;
   pointer-events: auto;
   transform: translateY(-50%);
@@ -3139,6 +4339,45 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
           border-color: $success-border;
         }
       }
+    }
+  }
+
+  .confirm-commit {
+    padding: 12px 24px;
+    border-bottom: 1px solid $border-color;
+    background: $bg-body;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .confirm-commit-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: $text-secondary;
+    }
+
+    .confirm-commit-textarea {
+      width: 100%;
+      min-height: 90px;
+      resize: vertical;
+      font-family: $font-mono;
+      font-size: 12px;
+      line-height: 1.5;
+      border: 1px solid $border-color;
+      border-radius: $radius-sm;
+      padding: 8px 10px;
+      background: $bg-body;
+      color: $text-main;
+      outline: none;
+    }
+
+    .confirm-commit-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: $text-secondary;
+      user-select: none;
     }
   }
 

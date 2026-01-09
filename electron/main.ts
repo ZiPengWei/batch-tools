@@ -43,6 +43,49 @@ const localGit = new LocalGitConflictService(gitlab);
 // Map to store conflict resolvers: runId -> resolveFunction
 const conflictResolvers = new Map<string, (res: any) => void>();
 
+function normalizeConflictFiles(list: unknown): any[] {
+  const raw = Array.isArray(list) ? list : [];
+  const out: any[] = [];
+  const seen = new Set<string>();
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const anyIt = it as any;
+    const p = String(
+      anyIt.new_path ??
+        anyIt.newPath ??
+        anyIt.file_path ??
+        anyIt.filePath ??
+        anyIt.path ??
+        anyIt.file ??
+        ""
+    ).trim();
+    if (!p) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push({ ...anyIt, new_path: p });
+  }
+  return out;
+}
+
+function mergeConflictFiles(a: any[], b: any[]) {
+  const map = new Map<string, any>();
+  for (const it of normalizeConflictFiles(a)) map.set(String(it.new_path), it);
+  for (const it of normalizeConflictFiles(b)) {
+    const key = String(it.new_path);
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, it);
+      continue;
+    }
+    const merged: any = { ...prev };
+    for (const [k, v] of Object.entries(it)) {
+      if (v !== undefined) merged[k] = v;
+    }
+    map.set(key, merged);
+  }
+  return Array.from(map.values());
+}
+
 ipcMain.handle(
   "gitlab:set-auth",
   async (
@@ -114,10 +157,63 @@ ipcMain.handle(
           event.sender.send("gitlab:batch-merge-log", { runId, text, error });
         },
         conflictHandler: async (conflictData) => {
+          let conflictFiles = Array.isArray((conflictData as any)?.conflicts)
+            ? ((conflictData as any).conflicts as any[])
+            : [];
+
+          const d = (conflictData as any)?.mrDetails;
+          const looksConflicted =
+            d?.has_conflicts ||
+            d?.detailed_merge_status === "conflicts" ||
+            d?.merge_status === "cannot_be_merged";
+
+          const pid = Number((conflictData as any).projectId || 0);
+          const iid = Number((conflictData as any).mrIid || 0);
+          const mrWebUrl = String((conflictData as any).mrWebUrl || "");
+
+          if (looksConflicted && pid && iid) {
+            try {
+              let fullList: any[] = [];
+              if (mrWebUrl) {
+                const [v4, json] = await Promise.all([
+                  gitlab.getMergeRequestConflicts(pid, iid),
+                  gitlab.getMergeRequestConflictsJsonByMrWebUrl(mrWebUrl, iid),
+                ]);
+                fullList = mergeConflictFiles(v4, json);
+              } else {
+                fullList = await gitlab.getMergeRequestConflicts(pid, iid);
+              }
+              if (fullList.length > conflictFiles.length) {
+                conflictFiles = fullList;
+                event.sender.send("gitlab:batch-merge-log", {
+                  runId,
+                  text: `已从 GitLab 拉取冲突文件列表：${conflictFiles.length} 个`,
+                  error: false,
+                });
+              }
+            } catch (e) {
+              event.sender.send("gitlab:batch-merge-log", {
+                runId,
+                text: `拉取 GitLab 冲突文件列表失败：${String(e)}`,
+                error: true,
+              });
+            }
+          }
+
           // Send conflict event to renderer
+          const autoLocalGitDetect = !conflictFiles.length && looksConflicted;
+          if (autoLocalGitDetect) {
+            event.sender.send("gitlab:batch-merge-log", {
+              runId,
+              text: "GitLab 冲突列表为空，可在界面中异步触发本地 Git 检测。",
+              error: false,
+            });
+          }
           event.sender.send("gitlab:merge-conflict", {
             runId,
             ...conflictData,
+            conflicts: conflictFiles,
+            autoLocalGitDetect,
           });
 
           // Wait for resolution
@@ -168,7 +264,13 @@ ipcMain.handle(
   "localgit:get-file-contents",
   async (
     _event: IpcMainInvokeEvent,
-    payload: { runId: string; filePath: string }
+    payload: {
+      runId: string;
+      filePath: string;
+      targetPath?: string;
+      sourcePath?: string;
+      basePath?: string;
+    }
   ) => {
     return await localGit.getFileContents(payload);
   }
@@ -227,6 +329,62 @@ ipcMain.handle(
     return await gitlab.getMergeRequestConflicts(
       payload.projectId,
       payload.mrIid
+    );
+  }
+);
+
+ipcMain.handle(
+  "gitlab:get-merge-request-conflicts-full",
+  async (
+    _event,
+    payload: { projectId: number; mrIid: number; mrWebUrl: string }
+  ) => {
+    const pid = Number(payload.projectId || 0);
+    const iid = Number(payload.mrIid || 0);
+    const mrWebUrl = String(payload.mrWebUrl || "");
+    if (!pid || !iid || !mrWebUrl) return [];
+    const [v4, json] = await Promise.all([
+      gitlab.getMergeRequestConflicts(pid, iid),
+      gitlab.getMergeRequestConflictsJsonByMrWebUrl(mrWebUrl, iid),
+    ]);
+    return mergeConflictFiles(v4, json);
+  }
+);
+
+ipcMain.handle(
+  "gitlab:get-conflict-for-path",
+  async (
+    _event,
+    payload: {
+      mrWebUrl: string;
+      mrIid: number;
+      oldPath: string;
+      newPath: string;
+    }
+  ) => {
+    return await gitlab.getMergeRequestConflictForPathByMrWebUrl(
+      payload.mrWebUrl,
+      payload.mrIid,
+      { oldPath: payload.oldPath, newPath: payload.newPath }
+    );
+  }
+);
+
+ipcMain.handle(
+  "gitlab:resolve-conflicts",
+  async (
+    _event,
+    payload: {
+      mrWebUrl: string;
+      mrIid: number;
+      commit_message: string;
+      files: any[];
+    }
+  ) => {
+    return await gitlab.resolveMergeRequestConflictsByMrWebUrl(
+      payload.mrWebUrl,
+      payload.mrIid,
+      { commit_message: payload.commit_message, files: payload.files }
     );
   }
 );
