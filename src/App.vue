@@ -42,7 +42,7 @@ const displaySourceBranches = computed(() => {
 
 type TargetRow = { type: 'branch'; name: string; isCore: boolean } | { type: 'separator' }
 
-const coreTargetOrder = ['dev', 'test', 'gray', 'master'] as const
+const coreTargetOrder = ['dev', 'test', 'gray'] as const
 const coreTargetSet = new Set<string>(coreTargetOrder)
 
 const displayTargetRows = computed<TargetRow[]>(() => {
