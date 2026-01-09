@@ -2140,6 +2140,110 @@ describe("ConflictDialog 交互", () => {
     wrapper.unmount();
   });
 
+  it("点击整行可打开文件，且复选框/差异按钮不会触发切换", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_row_click_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [
+            { type: "text", new_path: "a.txt" },
+            { type: "text", new_path: "b.txt" },
+          ],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const getCurrentPath = () =>
+      (setupState.currentFile?.value ?? setupState.currentFile)?.new_path;
+    const findRow = (p: string) =>
+      wrapper
+        .findAll(".conflict-file-row")
+        .find((r: any) => r.text().includes(p));
+
+    expect(getCurrentPath()).toBe("a.txt");
+
+    const rowB = findRow("b.txt");
+    expect(rowB).toBeTruthy();
+    await (rowB as any).trigger("click");
+
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (getCurrentPath() === "b.txt") break;
+    }
+    expect(getCurrentPath()).toBe("b.txt");
+
+    const rowA1 = findRow("a.txt");
+    expect(rowA1).toBeTruthy();
+    const diffBtnA = (rowA1 as any)
+      .findAll("button")
+      .find((b: any) => b.text().includes("差异"));
+    expect(diffBtnA).toBeTruthy();
+    await (diffBtnA as any).trigger("click");
+    await nextTick();
+    expect(getCurrentPath()).toBe("b.txt");
+
+    const checkboxA = (rowA1 as any).find('input[type="checkbox"]');
+    expect(checkboxA).toBeTruthy();
+    await (checkboxA as any).trigger("click");
+    await nextTick();
+    expect(getCurrentPath()).toBe("b.txt");
+
+    const rowA2 = findRow("a.txt");
+    expect(rowA2).toBeTruthy();
+    const actionsA = (rowA2 as any).find(".conflict-file-actions");
+    expect(actionsA).toBeTruthy();
+    await (actionsA as any).trigger("click");
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (getCurrentPath() === "a.txt") break;
+    }
+    expect(getCurrentPath()).toBe("a.txt");
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
   it("未选择任何文件时禁止完成并提示选择", async () => {
     const { mount } = await import("@vue/test-utils");
     const { nextTick } = await import("vue");
@@ -2485,6 +2589,32 @@ describe("ConflictDialog 交互", () => {
     const middleEditor = (setupState.middleEditor?.value ??
       setupState.middleEditor) as any;
     const model = middleEditor.getModel();
+
+    const overlayItemsRef = setupState.webstormOverlayItems as any;
+    if (overlayItemsRef?.value) {
+      overlayItemsRef.value = [{ id: "t1", line: 1, top: 10 }];
+    } else {
+      setupState.webstormOverlayItems = [{ id: "t1", line: 1, top: 10 }];
+    }
+    await nextTick();
+    await Promise.resolve();
+    await nextTick();
+
+    const overlay = document.querySelector(
+      ".webstorm-merge-overlay"
+    ) as HTMLElement | null;
+    const anyButton = document.querySelector(
+      ".webstorm-merge-btn"
+    ) as HTMLElement | null;
+    const anyControl = document.querySelector(
+      ".webstorm-merge-control"
+    ) as HTMLElement | null;
+    expect(overlay).toBeTruthy();
+    expect(anyControl).toBeTruthy();
+    expect(anyButton).toBeTruthy();
+    expect((overlay as HTMLElement).style.pointerEvents).toBe("none");
+    expect((anyControl as HTMLElement).style.pointerEvents).toBe("none");
+    expect((anyButton as HTMLElement).style.pointerEvents).toBe("auto");
 
     const oldPlatform = (navigator as any).platform;
     try {

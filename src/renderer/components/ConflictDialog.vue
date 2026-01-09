@@ -69,11 +69,11 @@
             </div>
             <div class="conflict-file-list">
               <div v-for="f in conflictFiles" :key="f.new_path" class="conflict-file-row"
-                :class="{ active: f.new_path === currentFile?.new_path }">
-                <label class="conflict-file-check">
+                :class="{ active: f.new_path === currentFile?.new_path }" @click="loading || openFile(f)">
+                <label class="conflict-file-check" @click.stop>
                   <input type="checkbox" :disabled="loading" :value="f.new_path" v-model="selectedPaths" />
                 </label>
-                <button class="conflict-file-open" :disabled="loading" @click="openFile(f)">
+                <button class="conflict-file-open" :disabled="loading" @click.stop="openFile(f)">
                   <span class="conflict-file-path" :title="f.new_path">{{ f.new_path }}</span>
                   <div class="conflict-file-meta">
                     <span class="conflict-file-status" :class="{ ok: isResolved(f.new_path) }">
@@ -85,7 +85,7 @@
                   </div>
                 </button>
                 <div class="conflict-file-actions">
-                  <button class="btn subtle tiny" :disabled="loading" @click="openDiff(f)">差异</button>
+                  <button class="btn subtle tiny" :disabled="loading" @click.stop="openDiff(f)">差异</button>
                 </div>
               </div>
             </div>
@@ -129,8 +129,8 @@
                 <div v-if="webstormOverlayItems.length" class="webstorm-merge-overlay">
                   <div v-for="it in webstormOverlayItems" :key="it.id" class="webstorm-merge-control"
                     :style="{ top: it.top + 'px' }">
-                    <button class="webstorm-merge-btn" @click="applySideToBlock('left', it.id)">«</button>
-                    <button class="webstorm-merge-btn" @click="applySideToBlock('right', it.id)">»</button>
+                    <button class="webstorm-merge-btn" @click="applySideToBlock('left', it.id)">→</button>
+                    <button class="webstorm-merge-btn" @click="applySideToBlock('right', it.id)">←</button>
                   </div>
                 </div>
               </div>
@@ -313,7 +313,7 @@
                 f.conflict_block_count : '未知' }}</span>
               <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-                }}</span>
+              }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
@@ -624,6 +624,20 @@ const emptyRefreshError = ref('');
 const emptyMrRefreshLoading = ref(false);
 const emptyMrRefreshError = ref('');
 const webstormOverlayItems = ref<Array<{ id: string; line: number; top: number }>>([]);
+function applyWebstormOverlayPointerPolicy() {
+  const wrap = editorMiddleWrap.value;
+  if (!wrap) return;
+  const overlay = wrap.querySelector('.webstorm-merge-overlay') as HTMLElement | null;
+  if (overlay) overlay.style.pointerEvents = 'none';
+  const controls = wrap.querySelectorAll('.webstorm-merge-control') as NodeListOf<HTMLElement>;
+  for (const el of controls) {
+    el.style.pointerEvents = 'none';
+  }
+  const buttons = wrap.querySelectorAll('.webstorm-merge-btn') as NodeListOf<HTMLElement>;
+  for (const el of buttons) {
+    el.style.pointerEvents = 'auto';
+  }
+}
 const conflictBlockCount = ref(0);
 const conflictCandidateCount = ref(0);
 const autoProcessedFiles = ref<Array<{ new_path: string; conflict_block_count: number }>>([]);
@@ -680,6 +694,10 @@ function applyUiFiltersNow() {
 }
 
 watch(showAllFiles, () => applyUiFiltersNow());
+watch(webstormOverlayItems, async () => {
+  await nextTick();
+  applyWebstormOverlayPointerPolicy();
+});
 
 onErrorCaptured((err) => {
   const msg = `界面错误：${String(err)}`;
@@ -1711,13 +1729,89 @@ async function openFile(file: any) {
 
 async function openDiff(file: any) {
   if (!file?.new_path) return;
-  if (currentFile.value?.new_path !== file.new_path) {
-    await loadFileSmart(file);
+  if (loading.value) return;
+
+  const newPath = String(file?.new_path || '').trim();
+  const oldPath = String(file?.old_path || '').trim();
+  const targetPath = (oldPath || newPath).trim();
+  const sourcePath = (newPath || oldPath).trim();
+  const basePath = (oldPath || newPath).trim();
+  const filePath = sourcePath || targetPath;
+  if (!filePath) return;
+
+  try {
+    let targetContent = '';
+    let sourceContent = '';
+
+    if (useMockData.value) {
+      const mock = buildMockThreeWayTexts(filePath);
+      targetContent = String(mock.left ?? '');
+      sourceContent = String(mock.right ?? '');
+    } else if (localGitEnabled.value) {
+      const res = await localGitGetFileContents({
+        runId: runId.value,
+        filePath,
+        targetPath,
+        sourcePath,
+        basePath,
+      });
+      if (!res?.ok) throw new Error(String(res?.error || '本地读取文件失败'));
+      targetContent = String(res.left ?? '');
+      sourceContent = String(res.right ?? '');
+    } else {
+      if (!target.value || !source.value) {
+        throw new Error(`分支信息缺失：source=${String(source.value || '')}, target=${String(target.value || '')}`);
+      }
+      const getWithFallback = async (ref: string, primary: string, fallback: string) => {
+        try {
+          const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
+          return { ok: true as const, path: primary, content: String(v ?? '') };
+        } catch (e1) {
+          if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
+          try {
+            const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
+            return { ok: true as const, path: fallback, content: String(v2 ?? '') };
+          } catch (e2) {
+            return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
+          }
+        }
+      };
+
+      const [tgtRes, srcRes] = await Promise.all([
+        getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+        getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+      ]);
+
+      if (!tgtRes.ok && !srcRes.ok) {
+        const msg = `无法加载差异内容（目标分支/源分支均读取失败）：${filePath}`;
+        uiError.value = msg;
+        addHistory(`差异读取失败：target(${target.value}) path=${tgtRes.path} err=${String((tgtRes as any).error || '')}`);
+        addHistory(`差异读取失败：source(${source.value}) path=${srcRes.path} err=${String((srcRes as any).error || '')}`);
+        return;
+      }
+      targetContent = String((tgtRes as any).content ?? '');
+      sourceContent = String((srcRes as any).content ?? '');
+    }
+
+    if (
+      (targetContent && targetContent.includes('\u0000')) ||
+      (sourceContent && sourceContent.includes('\u0000'))
+    ) {
+      const msg = `疑似二进制或不可显示内容：${filePath}`;
+      uiError.value = msg;
+      addHistory(msg);
+      return;
+    }
+
+    diffFilePath.value = file.new_path;
+    diffLeft.value = targetContent;
+    diffRight.value = sourceContent;
+    diffVisible.value = true;
+  } catch (e) {
+    const msg = `打开差异失败：${String(e)}`;
+    uiError.value = msg;
+    addHistory(msg);
   }
-  diffFilePath.value = file.new_path;
-  diffLeft.value = leftSnapshot.value || '';
-  diffRight.value = rightSnapshot.value || '';
-  diffVisible.value = true;
 }
 
 function closeDiff() {
@@ -3591,9 +3685,7 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
 .conflict-dialog {
   width: 100%;
-  max-width: 1400px;
-  height: 90vh;
-  max-height: 900px;
+  height: 100%;
   background: $bg-body;
   border-radius: $radius-lg;
   box-shadow: $shadow-lg;
@@ -3908,10 +4000,13 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
   padding: 0 10px;
+  gap: 0;
 
   .merge-pane-title {
     flex: 1;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 12px;
     font-weight: 600;
     color: $text-secondary;
@@ -3956,6 +4051,9 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   min-height: 0;
   position: relative;
+  gap: 0;
+  padding: 0;
+  background: $bg-body;
 }
 
 .pane-wrap {
@@ -3965,13 +4063,11 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   min-width: 0;
   position: relative;
   border-right: 1px solid $border-color;
+  background: $bg-body;
+  overflow: hidden;
 
   &:last-child {
     border-right: none;
-  }
-
-  &.middle {
-    flex: 1.2; // Give middle pane slightly more space
   }
 
   &.hidden {
@@ -4006,13 +4102,13 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   justify-content: space-between;
   align-items: center;
   padding: 0 4px;
-  pointer-events: auto;
+  pointer-events: none;
   transform: translateY(-50%);
 
   .webstorm-merge-btn {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
     background: #fff;
     border: 1px solid $border-color;
     color: $text-secondary;
@@ -4022,13 +4118,13 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     justify-content: center;
     cursor: pointer;
     box-shadow: $shadow-sm;
-    transition: all 0.2s;
+    transition: none;
+    pointer-events: auto;
 
     &:hover {
-      background: $primary;
-      color: white;
-      border-color: $primary;
-      transform: scale(1.1);
+      background: #fff;
+      color: $text-main;
+      border-color: $border-color;
     }
   }
 }
