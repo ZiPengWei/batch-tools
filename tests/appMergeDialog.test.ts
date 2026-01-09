@@ -435,6 +435,56 @@ describe("App 合并弹窗日志", () => {
   });
 });
 
+describe("组件快照", () => {
+  const normalizeSnapshotHtml = (html: string) => {
+    return html
+      .replace(/aria-labelledby="[^"]+"/g, 'aria-labelledby="__id__"')
+      .replace(/\sid="([a-f0-9]{8}|[a-f0-9]{16})"/g, ' id="__id__"');
+  };
+
+  it("App 初始渲染快照", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const App = (await import("../src/App.vue")).default;
+
+    const wrapper = mount(App, { attachTo: document.body });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(normalizeSnapshotHtml(wrapper.html())).toMatchSnapshot();
+    wrapper.unmount();
+  });
+
+  it("ConflictDialog 空状态快照", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { mount } = await import("@vue/test-utils");
+      const ConflictDialog = (
+        await import("../src/renderer/components/ConflictDialog.vue")
+      ).default;
+
+      const wrapper = mount(ConflictDialog, {
+        attachTo: document.body,
+        props: {
+          visible: true,
+          conflictData: {
+            projectId: 1,
+            source: "source",
+            target: "target",
+            mrIid: 0,
+            conflicts: [],
+          },
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(normalizeSnapshotHtml(wrapper.html())).toMatchSnapshot();
+      wrapper.unmount();
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+});
+
 describe("ConflictDialog 交互", () => {
   it("冲突文件列表为空时可确认已在 GitLab 解决并继续检测", async () => {
     const { mount } = await import("@vue/test-utils");
@@ -2110,11 +2160,11 @@ describe("ConflictDialog 交互", () => {
       await nextTick();
       await Promise.resolve();
       const setupState = (wrapper.vm as any).$?.setupState || {};
-      const checks = wrapper.findAll('input[type="checkbox"]');
+      const checks = wrapper.findAll(".conflict-file-check");
       if (checks.length === 2) break;
     }
 
-    const checks = wrapper.findAll('input[type="checkbox"]');
+    const checks = wrapper.findAll(".conflict-file-check");
     expect(checks.length).toBe(2);
 
     const setupState = (wrapper.vm as any).$?.setupState || {};
@@ -2221,7 +2271,7 @@ describe("ConflictDialog 交互", () => {
     await nextTick();
     expect(getCurrentPath()).toBe("b.txt");
 
-    const checkboxA = (rowA1 as any).find('input[type="checkbox"]');
+    const checkboxA = (rowA1 as any).find(".conflict-file-check");
     expect(checkboxA).toBeTruthy();
     await (checkboxA as any).trigger("click");
     await nextTick();

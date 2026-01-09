@@ -1,11 +1,26 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from './renderer/store/auth'
 import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
 import type { MergeRunSummary } from './renderer/store/merge'
-import ConflictDialog from './renderer/components/ConflictDialog.vue'
 import { onMergeConflict, openExternal } from './renderer/ipc/bridge'
+import {
+  NButton,
+  NCheckbox,
+  NConfigProvider,
+  NDialogProvider,
+  NInput,
+  NLoadingBarProvider,
+  NMessageProvider,
+  NNotificationProvider,
+  naiveBreakpoints,
+  naiveClsPrefix,
+  naiveNamespace,
+  naiveThemeOverrides,
+} from './renderer/ui/naive'
+
+const ConflictDialog = defineAsyncComponent(() => import('./renderer/components/ConflictDialog.vue'))
 
 const auth = useAuthStore()
 const projects = useProjectsStore()
@@ -183,7 +198,6 @@ onMounted(() => {
   auth.loadLocal()
 
   onMergeConflict((data) => {
-    console.log('收到冲突事件，打开冲突解决窗口');
     conflictData.value = data
     conflictVisible.value = true
     showConfirm.value = false
@@ -192,222 +206,243 @@ onMounted(() => {
   })
 })
 </script>
- 
+
 <template>
-  <div class="page">
-    <div class="container">
-      <div class="card auth-card">
-        <div class="row space-between" style="margin-bottom: 0">
-          <div class="card-title">
-            GitLab 认证
-            <div v-if="auth.connected" class="status-badge ok">
-              <span class="dot"></span> 已连接: {{ auth.userName }}
-            </div>
-            <div v-else class="status-badge muted">
-              <span class="dot"></span> 未连接
-            </div>
-          </div>
-          <button class="btn ghost small" @click="isAuthExpanded = !isAuthExpanded">
-            {{ isAuthExpanded ? '收起' : '配置' }}
-          </button>
-        </div>
+  <n-config-provider :cls-prefix="naiveClsPrefix" :namespace="naiveNamespace" :theme-overrides="naiveThemeOverrides"
+    :breakpoints="naiveBreakpoints">
+    <n-message-provider>
+      <n-dialog-provider>
+        <n-notification-provider>
+          <n-loading-bar-provider>
+            <div class="page">
+              <div class="container">
+                <div class="card auth-card">
+                  <div class="row space-between" style="margin-bottom: 0">
+                    <div class="card-title">
+                      GitLab 认证
+                      <div v-if="auth.connected" class="status-badge ok">
+                        <span class="dot" /> 已连接: {{ auth.userName }}
+                      </div>
+                      <div v-else class="status-badge muted">
+                        <span class="dot" /> 未连接
+                      </div>
+                    </div>
+                    <n-button class="btn ghost small" @click="isAuthExpanded = !isAuthExpanded">
+                      {{ isAuthExpanded ? '收起' : '配置' }}
+                    </n-button>
+                  </div>
 
-        <div v-show="isAuthExpanded" class="auth-body">
-          <div class="auth-grid">
-            <div class="input-group">
-              <div class="label">GitLab URL</div>
-              <input v-model="auth.baseUrl" class="input" placeholder="http://..." />
-            </div>
-            <div class="input-group">
-              <div class="label">Access Token</div>
-              <input v-model="auth.token" class="input" placeholder="glpat-..." type="password" />
-            </div>
-            <div class="actions">
-              <button class="btn" :disabled="auth.busy" @click="auth.connect()">
-                {{ auth.busy ? '验证中...' : '验证并连接' }}
-              </button>
-              <label class="checkbox small">
-                <input v-model="auth.rememberToken" type="checkbox" />
-                保存
-              </label>
-            </div>
-          </div>
-          <div v-if="auth.connected && projects.loading" class="muted small" style="margin-top: 8px">正在刷新项目列表...</div>
-          <div v-if="auth.error" class="status err" style="margin-top: 8px">{{ auth.error }}</div>
-        </div>
-      </div>
+                  <div v-show="isAuthExpanded" class="auth-body">
+                    <div class="auth-grid">
+                      <div class="input-group">
+                        <div class="label">GitLab URL</div>
+                        <n-input v-model:value="auth.baseUrl" class="input" placeholder="http://..." />
+                      </div>
+                      <div class="input-group">
+                        <div class="label">Access Token</div>
+                        <n-input v-model:value="auth.token" class="input" placeholder="glpat-..." type="password" />
+                      </div>
+                      <div class="actions">
+                        <n-button class="btn" :disabled="auth.busy" @click="auth.connect()">
+                          {{ auth.busy ? '验证中...' : '验证并连接' }}
+                        </n-button>
+                        <n-checkbox v-model:checked="auth.rememberToken" class="checkbox small">保存</n-checkbox>
+                      </div>
+                    </div>
+                    <div v-if="auth.connected && projects.loading" class="muted small" style="margin-top: 8px">
+                      正在刷新项目列表...
+                    </div>
+                    <div v-if="auth.error" class="status err" style="margin-top: 8px">{{ auth.error }}</div>
+                  </div>
+                </div>
 
-      <div class="content" :class="{ disabled: !canUseContent }">
-        <div class="columns">
-          <div class="card col project-col">
-            <div class="row space-between">
-              <div class="card-title">1. 选择项目</div>
-              <button class="btn" :disabled="!canUseContent || projects.loading" @click="projects.loadProjects()">
-                {{ projects.loading ? '加载中...' : '刷新项目' }}
-              </button>
-            </div>
-            <div class="row">
-              <input v-model="projects.filter" class="input" placeholder="过滤项目…" :disabled="!canUseContent"
-                @input="projects.setFilter(projects.filter)" />
-            </div>
+                <div class="content" :class="{ disabled: !canUseContent }">
+                  <div class="columns">
+                    <div class="card col project-col">
+                      <div class="row space-between">
+                        <div class="card-title">1. 选择项目</div>
+                        <n-button class="btn" :disabled="!canUseContent || projects.loading"
+                          @click="projects.loadProjects()">
+                          {{ projects.loading ? '加载中...' : '刷新项目' }}
+                        </n-button>
+                      </div>
+                      <div class="row">
+                        <n-input :value="projects.filter" class="input" placeholder="过滤项目…" :disabled="!canUseContent"
+                          @update:value="projects.setFilter" />
+                      </div>
 
-            <div class="list selector-box">
-              <button v-for="p in projects.filteredItems" :key="p.id" class="list-item"
-                :class="{ active: p.id === projects.selectedProjectId }" :disabled="!canUseContent"
-                @click="projects.selectProject({ id: p.id, display: p.display })">
-                {{ p.display }}
-              </button>
-              <div v-if="projects.loading" class="muted small">加载中...</div>
-              <div v-else-if="projects.error" class="err small">{{ projects.error }}</div>
-              <div v-else-if="!projects.items.length" class="selector-empty">暂无数据</div>
-            </div>
+                      <div class="list selector-box">
+                        <n-button v-for="p in projects.filteredItems" :key="p.id" class="list-item"
+                          :class="{ active: p.id === projects.selectedProjectId }" :disabled="!canUseContent"
+                          @click="projects.selectProject({ id: p.id, display: p.display })">
+                          {{ p.display }}
+                        </n-button>
+                        <div v-if="projects.loading" class="muted small">加载中...</div>
+                        <div v-else-if="projects.error" class="err small">{{ projects.error }}</div>
+                        <div v-else-if="!projects.items.length" class="selector-empty">暂无数据</div>
+                      </div>
 
-            <div class="muted small">已选: {{ projects.selectedProjectName || '(无)' }}</div>
-          </div>
+                      <div class="muted small">已选: {{ projects.selectedProjectName || '(无)' }}</div>
+                    </div>
 
-          <div class="card col branch-col">
-            <div class="row space-between">
-              <div class="card-title">2. 选择源分支</div>
-              <button class="btn" :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
-                @click="projects.loadAllBranches()">
-                {{ projects.sourceBranchesLoading ? '加载中...' : '刷新分支' }}
-              </button>
-            </div>
-            <div class="row">
-              <input v-model="sourceFilter" class="input" placeholder="过滤源分支..."
-                :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading" />
-            </div>
-            <div class="tags branch-list selector-box">
-              <button v-for="b in displaySourceBranches" :key="b" :title="b" class="tag"
-                :class="{ active: b === projects.selectedSourceBranch }"
-                :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
-                @click="projects.selectedSourceBranch = projects.selectedSourceBranch === b ? '' : b">
-                <span class="branch-name">{{ b }}</span>
-              </button>
-              <div v-if="projects.sourceBranchesLoading" class="muted small">加载中...</div>
-              <div v-else-if="projects.sourceBranchesError" class="err small">{{ projects.sourceBranchesError }}</div>
-              <div v-else-if="!projects.selectedProjectId || !displaySourceBranches.length" class="selector-empty">
-                暂无数据
+                    <div class="card col branch-col">
+                      <div class="row space-between">
+                        <div class="card-title">2. 选择源分支</div>
+                        <n-button class="btn" :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                          @click="projects.loadAllBranches()">
+                          {{ projects.sourceBranchesLoading ? '加载中...' : '刷新分支' }}
+                        </n-button>
+                      </div>
+                      <div class="row">
+                        <n-input v-model:value="sourceFilter" class="input" placeholder="过滤源分支..."
+                          :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading" />
+                      </div>
+                      <div class="tags branch-list selector-box">
+                        <n-button v-for="b in displaySourceBranches" :key="b" :title="b" class="tag"
+                          :class="{ active: b === projects.selectedSourceBranch }"
+                          :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                          @click="projects.selectedSourceBranch = projects.selectedSourceBranch === b ? '' : b">
+                          <span class="branch-name">{{ b }}</span>
+                        </n-button>
+                        <div v-if="projects.sourceBranchesLoading" class="muted small">加载中...</div>
+                        <div v-else-if="projects.sourceBranchesError" class="err small">{{ projects.sourceBranchesError
+                        }}</div>
+                        <div v-else-if="!projects.selectedProjectId || !displaySourceBranches.length"
+                          class="selector-empty">
+                          暂无数据
+                        </div>
+                      </div>
+                      <div class="muted small">共 {{ displaySourceBranches.length }} 个分支</div>
+                    </div>
+
+                    <div class="card col branch-col">
+                      <div class="row space-between">
+                        <div class="card-title">3. 选择目标分支</div>
+                        <n-button class="btn"
+                          :disabled="merge.running || !projects.selectedProjectId || !projects.selectedSourceBranch || !merge.selectedTargets.length"
+                          @click="onClickBatch">
+                          {{ merge.running ? '处理中...' : mergeButtonText }}
+                        </n-button>
+                      </div>
+                      <div class="row">
+                        <n-input v-model:value="merge.targetFilter" class="input" placeholder="过滤目标分支..." />
+                      </div>
+                      <div class="tags branch-list selector-box">
+                        <template v-for="(row, idx) in displayTargetRows"
+                          :key="row.type === 'separator' ? `sep-${idx}` : row.name">
+                          <div v-if="row.type === 'separator'" class="branch-sep" />
+                          <n-button v-else class="tag"
+                            :class="{ active: merge.selectedTargets.includes(row.name), core: row.isCore }"
+                            :disabled="!projects.selectedProjectId" :title="row.name"
+                            @click="merge.toggleTarget(row.name)">
+                            <span v-if="row.isCore" class="core-mark">★</span>
+                            <span class="branch-name">{{ row.name }}</span>
+                          </n-button>
+                        </template>
+                        <div v-if="projects.targetBranchesLoading" class="muted small">加载中...</div>
+                        <div v-else-if="projects.targetBranchesError" class="err small">{{ projects.targetBranchesError
+                        }}</div>
+                        <div v-else-if="
+                          projects.selectedProjectId &&
+                          merge.targets.length &&
+                          !displayTargetRows.length &&
+                          !projects.targetBranchesLoading &&
+                          !projects.targetBranchesError
+                        " class="muted small">
+                          无匹配
+                        </div>
+                        <div v-else-if="!projects.selectedProjectId || !merge.targets.length" class="selector-empty">
+                          暂无数据
+                        </div>
+                      </div>
+                      <div class="muted small">共 {{displayTargetRows.filter((r) => r.type === 'branch').length}} 个分支
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
               </div>
-            </div>
-            <div class="muted small">共 {{ displaySourceBranches.length }} 个分支</div>
-          </div>
 
-          <div class="card col branch-col">
-            <div class="row space-between">
-              <div class="card-title">3. 选择目标分支</div>
-              <button class="btn"
-                :disabled="merge.running || !projects.selectedProjectId || !projects.selectedSourceBranch || !merge.selectedTargets.length"
-                @click="onClickBatch">
-                {{ merge.running ? '处理中...' : mergeButtonText }}
-              </button>
-            </div>
-            <div class="row">
-              <input v-model="merge.targetFilter" class="input" placeholder="过滤目标分支..." />
-            </div>
-            <div class="tags branch-list selector-box">
-              <template v-for="(row, idx) in displayTargetRows"
-                :key="row.type === 'separator' ? `sep-${idx}` : row.name">
-                <div v-if="row.type === 'separator'" class="branch-sep" />
-                <button v-else class="tag"
-                  :class="{ active: merge.selectedTargets.includes(row.name), core: row.isCore }"
-                  :disabled="!projects.selectedProjectId" :title="row.name" @click="merge.toggleTarget(row.name)">
-                  <span v-if="row.isCore" class="core-mark">★</span>
-                  <span class="branch-name">{{ row.name }}</span>
-                </button>
-              </template>
-              <div v-if="projects.targetBranchesLoading" class="muted small">加载中...</div>
-              <div v-else-if="projects.targetBranchesError" class="err small">{{ projects.targetBranchesError }}</div>
-              <div v-else-if="
-                projects.selectedProjectId &&
-                merge.targets.length &&
-                !displayTargetRows.length &&
-                !projects.targetBranchesLoading &&
-                !projects.targetBranchesError
-              " class="muted small">
-                无匹配
+              <div v-if="showConfirm" class="modal">
+                <div class="dialog">
+                  <div class="dialog-title">{{ confirmRunning ? '正在合并...' : '确认合并' }}</div>
+                  <div class="dialog-text">
+                    <div>源分支: 1 个</div>
+                    <div>目标分支: {{ merge.selectedTargets.length }} 个</div>
+                    <div>总计创建 MR: {{ merge.selectedTargets.length }} 个</div>
+                    <div class="small muted">
+                      注意：先创建 MR 并检测是否可合并；若检测到冲突/无法确认，将回滚（删除/关闭）本次创建的 MR。
+                    </div>
+                  </div>
+                  <div v-if="confirmRunning" class="dialog-text log-wrapper">
+                    <div v-if="conflictVisible" class="small muted"
+                      style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
+                      <span>冲突处理中：已弹出冲突解决窗口，请完成处理后继续。</span>
+                      <n-button v-if="conflictMrWebUrl" class="btn ghost" @click="openConflictMr">打开 MR</n-button>
+                    </div>
+                    <div class="muted small">操作日志</div>
+                    <div ref="confirmLogEl" class="log">
+                      <div v-if="confirmLogHint" class="log-line muted">{{ confirmLogHint }}</div>
+                      <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">
+                        {{ l.text }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="dialog-actions">
+                    <template v-if="!confirmRunning">
+                      <n-button class="btn ghost" @click="showConfirm = false">取消</n-button>
+                      <n-button class="btn" @click="confirmRun">确认</n-button>
+                    </template>
+                    <template v-else>
+                      <n-button class="btn" disabled>合并中...</n-button>
+                    </template>
+                  </div>
+                </div>
               </div>
-              <div v-else-if="!projects.selectedProjectId || !merge.targets.length" class="selector-empty">暂无数据</div>
-            </div>
-            <div class="muted small">共 {{displayTargetRows.filter((r) => r.type === 'branch').length}} 个分支</div>
-          </div>
-        </div>
 
-      </div>
-    </div>
+              <div v-if="showFinish" class="modal">
+                <div class="dialog">
+                  <div class="dialog-title">{{ finishTitle }}</div>
+                  <div class="dialog-text">
+                    <template v-if="finishSummary?.ok">
+                      <template v-if="finishSummary.mergedCount">
+                        <div>成功 MR: {{ finishSummary.mergedCount }} 个</div>
+                      </template>
+                      <template v-else-if="finishSummary.noopCount">
+                        <div>本次无变更，已跳过: {{ finishSummary.noopCount }} 项</div>
+                      </template>
+                      <div v-else>成功 MR: 0 个</div>
+                      <div v-if="finishSummary.mergedCount && finishSummary.noopCount">已跳过无变更: {{
+                        finishSummary.noopCount }} 项</div>
+                    </template>
+                    <template v-else>
+                      <div v-if="finishSummary">冲突/失败: {{ finishSummary.conflictsCount }} 项</div>
+                      <div v-if="finishSummary?.rolledBack">已回滚本次创建的 MR</div>
+                      <div v-if="finishSummary?.message" class="small muted">{{ finishSummary.message }}</div>
+                    </template>
+                  </div>
+                  <div class="dialog-text log-wrapper">
+                    <div class="muted small">操作日志</div>
+                    <div class="log">
+                      <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">
+                        {{ l.text }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="dialog-actions">
+                    <n-button class="btn" @click="showFinish = false">我知道了</n-button>
+                  </div>
+                </div>
+              </div>
 
-    <div v-if="showConfirm" class="modal">
-      <div class="dialog">
-        <div class="dialog-title">{{ confirmRunning ? '正在合并...' : '确认合并' }}</div>
-        <div class="dialog-text">
-          <div>源分支: 1 个</div>
-          <div>目标分支: {{ merge.selectedTargets.length }} 个</div>
-          <div>总计创建 MR: {{ merge.selectedTargets.length }} 个</div>
-          <div class="small muted">
-            注意：先创建 MR 并检测是否可合并；若检测到冲突/无法确认，将回滚（删除/关闭）本次创建的 MR。
-          </div>
-        </div>
-        <div v-if="confirmRunning" class="dialog-text log-wrapper">
-          <div v-if="conflictVisible" class="small muted"
-            style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
-            <span>冲突处理中：已弹出冲突解决窗口，请完成处理后继续。</span>
-            <button v-if="conflictMrWebUrl" class="btn ghost" @click="openConflictMr">打开 MR</button>
-          </div>
-          <div class="muted small">操作日志</div>
-          <div ref="confirmLogEl" class="log">
-            <div v-if="confirmLogHint" class="log-line muted">{{ confirmLogHint }}</div>
-            <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">{{ l.text }}
+              <ConflictDialog :visible="conflictVisible" :conflict-data="conflictData"
+                @close="conflictVisible = false" />
             </div>
-          </div>
-        </div>
-        <div class="dialog-actions">
-          <template v-if="!confirmRunning">
-            <button class="btn ghost" @click="showConfirm = false">取消</button>
-            <button class="btn" @click="confirmRun">确认</button>
-          </template>
-          <template v-else>
-            <button class="btn" disabled>合并中...</button>
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="showFinish" class="modal">
-      <div class="dialog">
-        <div class="dialog-title">{{ finishTitle }}</div>
-        <div class="dialog-text">
-          <template v-if="finishSummary?.ok">
-            <template v-if="finishSummary.mergedCount">
-              <div>成功 MR: {{ finishSummary.mergedCount }} 个</div>
-            </template>
-            <template v-else-if="finishSummary.noopCount">
-              <div>本次无变更，已跳过: {{ finishSummary.noopCount }} 项</div>
-            </template>
-            <div v-else>成功 MR: 0 个</div>
-            <div v-if="finishSummary.mergedCount && finishSummary.noopCount">已跳过无变更: {{ finishSummary.noopCount }} 项
-            </div>
-          </template>
-          <template v-else>
-            <div v-if="finishSummary">冲突/失败: {{ finishSummary.conflictsCount }} 项</div>
-            <div v-if="finishSummary?.rolledBack">已回滚本次创建的 MR</div>
-            <div v-if="finishSummary?.message" class="small muted">{{ finishSummary.message }}</div>
-          </template>
-        </div>
-        <div class="dialog-text log-wrapper">
-          <div class="muted small">操作日志</div>
-          <div class="log">
-            <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">{{ l.text }}
-            </div>
-          </div>
-        </div>
-        <div class="dialog-actions">
-          <button class="btn" @click="showFinish = false">我知道了</button>
-        </div>
-      </div>
-    </div>
-
-    <ConflictDialog :visible="conflictVisible" :conflict-data="conflictData" @close="conflictVisible = false" />
-  </div>
+          </n-loading-bar-provider>
+        </n-notification-provider>
+      </n-dialog-provider>
+    </n-message-provider>
+  </n-config-provider>
 </template>
 
 <style scoped lang="scss">
