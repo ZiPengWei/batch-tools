@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vue-tsc && vite build && electron-builder",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
     "@types/vscode": "^1.107.0",

@@ -9,15 +9,13 @@
           </div>
         </div>
         <div class="conflict-header-actions">
-          <n-button v-if="conflictFiles.length && compactMode" class="btn subtle small" :disabled="loading"
-            @click="toggleSidebarDrawer">{{ sidebarDrawerOpen ? '收起文件列表' : '打开文件列表' }}</n-button>
+          <n-button v-if="conflictFiles.length && compactMode" :disabled="loading" @click="toggleSidebarDrawer">{{
+            sidebarDrawerOpen ? '收起文件列表' : '打开文件列表' }}</n-button>
           <a v-if="mrWebUrl" href="#" @click.prevent="openMrLink" class="conflict-link">
             查看 MR !{{ conflictData?.mrIid }}
           </a>
-          <n-button class="btn subtle small" :disabled="loading || conflictCandidateCount === 0"
-            @click="jumpConflict(-1)">上一个冲突</n-button>
-          <n-button class="btn subtle small" :disabled="loading || conflictCandidateCount === 0"
-            @click="jumpConflict(1)">下一个冲突</n-button>
+          <n-button :disabled="loading || conflictCandidateCount === 0" @click="jumpConflict(-1)">上一个冲突</n-button>
+          <n-button :disabled="loading || conflictCandidateCount === 0" @click="jumpConflict(1)">下一个冲突</n-button>
           <span class="conflict-progress">已解决: {{ resolvedCount }} / {{ totalCount }}</span>
           <span v-if="pendingActionsCount" class="conflict-progress">已暂存: {{ pendingActionsCount }}</span>
           <span class="conflict-progress">
@@ -28,8 +26,7 @@
           <span v-if="zeroConflictFiles.length" class="conflict-progress">
             {{ showAllFiles ? '无冲突文件' : '已过滤无冲突文件' }}: {{ zeroConflictFiles.length }}
           </span>
-          <n-button v-if="allConflictFiles.length" class="btn subtle small" :disabled="loading"
-            @click="showAllFiles = !showAllFiles">
+          <n-button v-if="allConflictFiles.length" :disabled="loading" @click="showAllFiles = !showAllFiles">
             {{ showAllFiles ? '仅显示冲突文件' : '显示所有文件' }}
           </n-button>
           <span v-if="conflictCountScan.total" class="conflict-progress">
@@ -62,9 +59,9 @@
               <div v-if="conflictListError" class="conflict-sidebar-subtitle">{{ conflictListError }}</div>
               <div v-if="uiError" class="conflict-sidebar-subtitle">{{ uiError }}</div>
               <div class="conflict-sidebar-actions">
-                <n-button class="btn subtle small" :disabled="loading" @click="selectAll">全选</n-button>
-                <n-button class="btn subtle small" :disabled="loading" @click="selectNone">全不选</n-button>
-                <n-button class="btn subtle small" :disabled="loading" @click="selectUnresolved">仅选未解决</n-button>
+                <n-button :disabled="loading" @click="selectAll">全选</n-button>
+                <n-button :disabled="loading" @click="selectNone">全不选</n-button>
+                <n-button :disabled="loading" @click="selectUnresolved">仅选未解决</n-button>
               </div>
             </div>
             <div class="conflict-file-list">
@@ -74,7 +71,7 @@
                   <label class="conflict-file-check" @click.stop>
                     <n-checkbox :disabled="loading" :value="f.new_path" />
                   </label>
-                  <n-button class="conflict-file-open" :disabled="loading" @click.stop="openFile(f)">
+                  <n-button :disabled="loading" @click.stop="openFile(f)">
                     <span class="conflict-file-path" :title="f.new_path">{{ f.new_path }}</span>
                     <div class="conflict-file-meta">
                       <span class="conflict-file-status" :class="{ ok: isResolved(f.new_path) }">
@@ -86,7 +83,7 @@
                     </div>
                   </n-button>
                   <div class="conflict-file-actions">
-                    <n-button class="btn subtle tiny" :disabled="loading" @click.stop="openDiff(f)">差异</n-button>
+                    <n-button :disabled="loading" @click.stop="openDiff(f)">差异</n-button>
                   </div>
                 </div>
               </n-checkbox-group>
@@ -102,16 +99,13 @@
           <div class="conflict-editor-main">
             <div v-if="conflictFiles.length" class="merge-panes-header">
               <template v-if="compactMode">
-                <n-button class="merge-pane-tab" :class="{ active: visiblePane === 'left' }"
-                  @click="setVisiblePane('left')">
+                <n-button @click="setVisiblePane('left')">
                   本地（{{ target }}）
                 </n-button>
-                <n-button class="merge-pane-tab middle" :class="{ active: visiblePane === 'middle' }"
-                  @click="setVisiblePane('middle')">
+                <n-button @click="setVisiblePane('middle')">
                   结果（可编辑）
                 </n-button>
-                <n-button class="merge-pane-tab" :class="{ active: visiblePane === 'right' }"
-                  @click="setVisiblePane('right')">
+                <n-button @click="setVisiblePane('right')">
                   远程（{{ source }}）
                 </n-button>
               </template>
@@ -131,8 +125,8 @@
                 <div v-if="webstormOverlayItems.length" class="webstorm-merge-overlay">
                   <div v-for="it in webstormOverlayItems" :key="it.id" class="webstorm-merge-control"
                     :style="{ top: it.top + 'px' }">
-                    <n-button class="webstorm-merge-btn" @click="applySideToBlock('left', it.id)">→</n-button>
-                    <n-button class="webstorm-merge-btn" @click="applySideToBlock('right', it.id)">←</n-button>
+                    <n-button @click="applySideToBlock('left', it.id)">→</n-button>
+                    <n-button @click="applySideToBlock('right', it.id)">←</n-button>
                   </div>
                 </div>
               </div>
@@ -158,16 +152,13 @@
                 <p class="conflict-empty-title">未找到冲突文件</p>
                 <p class="conflict-empty-subtitle">GitLab API 返回的冲突列表为空。可能是二进制文件冲突或已被其他操作解决。</p>
                 <div class="conflict-empty-actions">
-                  <n-button class="btn subtle small" :disabled="loading || emptyRefreshLoading"
-                    @click="refreshConflictList">
+                  <n-button :disabled="loading || emptyRefreshLoading" @click="refreshConflictList">
                     {{ emptyRefreshLoading ? '拉取中...' : '重新拉取冲突列表' }}
                   </n-button>
-                  <n-button class="btn subtle small" :disabled="loading || emptyMrRefreshLoading"
-                    @click="refreshMrStatus">
+                  <n-button :disabled="loading || emptyMrRefreshLoading" @click="refreshMrStatus">
                     {{ emptyMrRefreshLoading ? '刷新中...' : '刷新 MR 状态' }}
                   </n-button>
-                  <n-button class="btn subtle small" :disabled="loading || localGitLoading"
-                    @click="prepareLocalGitConflicts">
+                  <n-button :disabled="loading || localGitLoading" @click="prepareLocalGitConflicts">
                     {{ localGitLoading ? '本地检测中...' : '使用本地 Git 检测冲突' }}
                   </n-button>
                 </div>
@@ -189,8 +180,8 @@
                   <div class="conflict-empty-files-title">MR 变更文件（供排查）</div>
                   <div class="conflict-empty-files-list">
                     <div v-for="(f, idx) in relatedFiles" :key="idx" class="conflict-empty-file file-row">
-                      <n-button class="file-open" :disabled="loading" @click="openAdhocMerge(f)">{{ f }}</n-button>
-                      <n-button class="btn subtle tiny" :disabled="loading" @click="openAdhocMerge(f)">三方合并</n-button>
+                      <n-button :disabled="loading" @click="openAdhocMerge(f)">{{ f }}</n-button>
+                      <n-button :disabled="loading" @click="openAdhocMerge(f)">三方合并</n-button>
                     </div>
                   </div>
                   <div v-if="relatedBinaryCandidates.length" class="conflict-empty-files">
@@ -245,27 +236,27 @@
         </div>
         <div class="conflict-footer-actions">
           <template v-if="conflictFiles.length === 0 && pendingActionsCount === 0">
-            <n-button class="btn danger" :disabled="loading" @click="cancelMerge">取消合并</n-button>
-            <n-button class="btn primary" :disabled="loading" @click="confirmResolvedExternally">我已在 GitLab
+            <n-button :disabled="loading" @click="cancelMerge">取消合并</n-button>
+            <n-button :disabled="loading" @click="confirmResolvedExternally">我已在 GitLab
               解决，继续检测</n-button>
           </template>
           <template v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0">
-            <n-button class="btn danger" :disabled="loading" @click="cancelMerge">取消合并</n-button>
-            <n-button class="btn primary" :disabled="loading" @click="openFinalConfirm">完成合并</n-button>
+            <n-button :disabled="loading" @click="cancelMerge">取消合并</n-button>
+            <n-button :disabled="loading" @click="openFinalConfirm">完成合并</n-button>
           </template>
           <template v-else>
-            <n-button class="btn subtle" :disabled="loading" @click="acceptCurrentBranch">接受本地更改</n-button>
-            <n-button class="btn subtle" :disabled="loading" @click="acceptTargetBranch">接受远程更改</n-button>
-            <n-button class="btn subtle" :disabled="loading" @click="acceptBothBranches">接受两者</n-button>
-            <n-button class="btn subtle" :disabled="loading || gitMergeLoading" @click="applyGitThreeWayMergeToResult">
+            <n-button :disabled="loading" @click="acceptCurrentBranch">接受本地更改</n-button>
+            <n-button :disabled="loading" @click="acceptTargetBranch">接受远程更改</n-button>
+            <n-button :disabled="loading" @click="acceptBothBranches">接受两者</n-button>
+            <n-button :disabled="loading || gitMergeLoading" @click="applyGitThreeWayMergeToResult">
               {{ gitMergeLoading ? 'Git 合并中...' : 'Git 三方合并' }}
             </n-button>
-            <n-button class="btn subtle" :disabled="loading" @click="undoEdit">撤销</n-button>
-            <n-button class="btn subtle" :disabled="loading || !isResolved(currentFile?.new_path)"
+            <n-button :disabled="loading" @click="undoEdit">撤销</n-button>
+            <n-button :disabled="loading || !isResolved(currentFile?.new_path)"
               @click="unstageCurrentFile">撤销暂存</n-button>
             <div class="footer-action-group">
-              <n-button class="btn danger" :disabled="loading" @click="cancelMerge">取消合并</n-button>
-              <n-button class="btn primary" :disabled="loading" @click="markResolved">
+              <n-button :disabled="loading" @click="cancelMerge">取消合并</n-button>
+              <n-button :disabled="loading" @click="markResolved">
                 {{ isAllResolved ? '完成合并' : '下一个文件' }}
               </n-button>
             </div>
@@ -277,7 +268,7 @@
         <div class="diff-dialog">
           <div class="diff-header">
             <div class="diff-title">查看差异: {{ diffFilePath }}</div>
-            <n-button class="btn subtle" @click="closeDiff">关闭</n-button>
+            <n-button @click="closeDiff">关闭</n-button>
           </div>
           <div class="diff-body">
             <div class="diff-panel">
@@ -321,17 +312,16 @@
           </div>
           <div class="confirm-commit">
             <div class="confirm-commit-title">提交说明（commit message）</div>
-            <n-input v-model:value="commitMessage" class="confirm-commit-textarea" :disabled="loading" type="textarea"
-              placeholder="请输入提交说明" />
-            <n-checkbox v-model:checked="sourceMapsToHead" class="confirm-commit-row" :disabled="loading">
+            <n-input v-model:value="commitMessage" :disabled="loading" type="textarea" placeholder="请输入提交说明" />
+            <n-checkbox v-model:checked="sourceMapsToHead" :disabled="loading">
               源分支对应 head（目标分支对应 origin）
             </n-checkbox>
           </div>
           <div class="confirm-actions">
-            <n-button class="btn subtle" :disabled="loading" @click="finalConfirmVisible = false">返回继续编辑</n-button>
-            <n-button class="btn subtle" :disabled="loading || resolveConflictsLoading || !canResolveWithGitlab"
+            <n-button :disabled="loading" @click="finalConfirmVisible = false">返回继续编辑</n-button>
+            <n-button :disabled="loading || resolveConflictsLoading || !canResolveWithGitlab"
               @click="confirmAndResolveConflicts">{{ resolveConflictsLoading ? '提交中...' : '使用 GitLab 提交' }}</n-button>
-            <n-button class="btn primary" :disabled="loading || !canFinish" @click="confirmAndCommit">提交到源分支</n-button>
+            <n-button :disabled="loading || !canFinish" @click="confirmAndCommit">提交到源分支</n-button>
           </div>
         </div>
       </div>
@@ -635,10 +625,10 @@ function applyWebstormOverlayPointerPolicy() {
   for (const el of controls) {
     el.style.pointerEvents = 'none';
   }
-  const buttons = wrap.querySelectorAll('.webstorm-merge-btn') as NodeListOf<HTMLElement>;
-  for (const el of buttons) {
-    el.style.pointerEvents = 'auto';
-  }
+  const buttons = wrap.querySelectorAll(
+    '.webstorm-merge-overlay button, .webstorm-merge-btn'
+  ) as NodeListOf<HTMLElement>;
+  for (const el of buttons) el.style.pointerEvents = 'auto';
 }
 const conflictBlockCount = ref(0);
 const conflictCandidateCount = ref(0);

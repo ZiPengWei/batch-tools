@@ -84,6 +84,14 @@ pnpm test
 └── ...
 ```
 
+## 🎨 UI 规范：Naive UI 组件保持原生
+
+- 禁止通过 `theme-overrides` / `cls-prefix` / `namespace` 等全局配置改变组件样式或类名前缀。
+- 禁止在任意 `n-*` 组件上使用 `class` / `style` / `size` 等会改变表现的属性。
+- 如必须定制，仅允许使用 Naive UI 官方提供的 props 或主题配置，并确保视觉与交互保持原生一致。
+- 自动检查：运行 `pnpm test`（或 `pnpm lint`）会包含使用规范检查用例，确保没有遗漏。
+- 代码审查要点：Review 时重点检查新增/修改的 `n-*` 组件是否引入了额外样式或非默认配置。
+
 ## 📄 License
 
 [MIT](LICENSE)

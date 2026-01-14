@@ -2653,9 +2653,9 @@ describe("ConflictDialog 交互", () => {
     const overlay = document.querySelector(
       ".webstorm-merge-overlay"
     ) as HTMLElement | null;
-    const anyButton = document.querySelector(
-      ".webstorm-merge-btn"
-    ) as HTMLElement | null;
+    const anyButton = (overlay?.querySelector("button") ?? null) as
+      | HTMLElement
+      | null;
     const anyControl = document.querySelector(
       ".webstorm-merge-control"
     ) as HTMLElement | null;
@@ -2812,7 +2812,7 @@ describe("ConflictDialog 交互", () => {
     const model = middleEditor.getModel();
 
     expect(model.getValue()).toBe("A\nB\nC");
-    const btn = wrapper.find(".webstorm-merge-btn");
+    const btn = wrapper.find(".webstorm-merge-overlay button");
     expect(btn.exists()).toBe(true);
     await btn.trigger("click");
     await nextTick();
