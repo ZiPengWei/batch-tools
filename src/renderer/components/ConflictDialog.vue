@@ -1,41 +1,92 @@
 <template>
-  <div v-if="visible" class="conflict-modal">
+  <div
+    v-if="visible"
+    class="conflict-modal"
+  >
     <div class="conflict-dialog">
       <div class="conflict-header">
         <div>
-          <h2 class="conflict-title">解决冲突: {{ currentFile?.new_path || 'Unknown File' }}</h2>
+          <h2 class="conflict-title">
+            解决冲突: {{ currentFile?.new_path || 'Unknown File' }}
+          </h2>
           <div class="conflict-subtitle">
             合并: {{ source }} (Incoming) -> {{ target }} (Current)
           </div>
         </div>
         <div class="conflict-header-actions">
-          <n-button v-if="conflictFiles.length && compactMode" :disabled="loading" @click="toggleSidebarDrawer">{{
-            sidebarDrawerOpen ? '收起文件列表' : '打开文件列表' }}</n-button>
-          <a v-if="mrWebUrl" href="#" @click.prevent="openMrLink" class="conflict-link">
+          <n-button
+            v-if="conflictFiles.length && compactMode"
+            :disabled="loading"
+            @click="toggleSidebarDrawer"
+          >
+            {{
+              sidebarDrawerOpen ? '收起文件列表' : '打开文件列表' }}
+          </n-button>
+          <a
+            v-if="mrWebUrl"
+            class="conflict-link"
+            href="#"
+            @click.prevent="openMrLink"
+          >
             查看 MR !{{ conflictData?.mrIid }}
           </a>
-          <n-button :disabled="loading || conflictCandidateCount === 0" @click="jumpConflict(-1)">上一个冲突</n-button>
-          <n-button :disabled="loading || conflictCandidateCount === 0" @click="jumpConflict(1)">下一个冲突</n-button>
+          <n-button
+            :disabled="loading || conflictCandidateCount === 0"
+            @click="jumpConflict(-1)"
+          >
+            上一个冲突
+          </n-button>
+          <n-button
+            :disabled="loading || conflictCandidateCount === 0"
+            @click="jumpConflict(1)"
+          >
+            下一个冲突
+          </n-button>
           <span class="conflict-progress">已解决: {{ resolvedCount }} / {{ totalCount }}</span>
-          <span v-if="pendingActionsCount" class="conflict-progress">已暂存: {{ pendingActionsCount }}</span>
+          <span
+            v-if="pendingActionsCount"
+            class="conflict-progress"
+          >已暂存: {{ pendingActionsCount }}</span>
           <span class="conflict-progress">
             进度: {{ progressCurrent }} / {{ conflictFiles.length }}
           </span>
-          <span v-if="conflictBlockCount" class="conflict-progress">冲突块: {{ conflictBlockCount }}</span>
-          <span v-if="autoProcessedCount" class="conflict-progress">已自动处理: {{ autoProcessedCount }}</span>
-          <span v-if="zeroConflictFiles.length" class="conflict-progress">
+          <span
+            v-if="conflictBlockCount"
+            class="conflict-progress"
+          >冲突块: {{ conflictBlockCount }}</span>
+          <span
+            v-if="autoProcessedCount"
+            class="conflict-progress"
+          >已自动处理: {{ autoProcessedCount }}</span>
+          <span
+            v-if="zeroConflictFiles.length"
+            class="conflict-progress"
+          >
             {{ showAllFiles ? '无冲突文件' : '已过滤无冲突文件' }}: {{ zeroConflictFiles.length }}
           </span>
-          <n-button v-if="allConflictFiles.length" :disabled="loading" @click="showAllFiles = !showAllFiles">
+          <n-button
+            v-if="allConflictFiles.length"
+            :disabled="loading"
+            @click="showAllFiles = !showAllFiles"
+          >
             {{ showAllFiles ? '仅显示冲突文件' : '显示所有文件' }}
           </n-button>
-          <span v-if="conflictCountScan.total" class="conflict-progress">
+          <span
+            v-if="conflictCountScan.total"
+            class="conflict-progress"
+          >
             冲突统计: {{ conflictCountScan.done }} / {{ conflictCountScan.total }}
           </span>
-          <span v-if="conflictCountScan.running" class="conflict-progress">
+          <span
+            v-if="conflictCountScan.running"
+            class="conflict-progress"
+          >
             统计耗时: {{ conflictCountScanElapsedText }}
           </span>
-          <span v-if="conflictCountScanMemoryText" class="conflict-progress">
+          <span
+            v-if="conflictCountScanMemoryText"
+            class="conflict-progress"
+          >
             内存: {{ conflictCountScanMemoryText }}
           </span>
         </div>
@@ -43,61 +94,145 @@
 
       <div class="conflict-editor">
         <div class="conflict-body">
-          <div v-if="conflictFiles.length && compactMode && sidebarDrawerOpen" class="sidebar-mask"
-            @click="sidebarDrawerOpen = false"></div>
-          <div v-if="conflictFiles.length" class="conflict-sidebar"
-            :class="{ drawer: compactMode, open: sidebarDrawerOpen }">
+          <div
+            v-if="conflictFiles.length && compactMode && sidebarDrawerOpen"
+            class="sidebar-mask"
+            @click="sidebarDrawerOpen = false"
+          />
+          <div
+            v-if="conflictFiles.length"
+            class="conflict-sidebar"
+            :class="{ drawer: compactMode, open: sidebarDrawerOpen }"
+          >
             <div class="conflict-sidebar-header">
-              <div class="conflict-sidebar-title">冲突文件</div>
-              <div class="conflict-sidebar-subtitle">已选择: {{ selectedCount }} / {{ conflictFiles.length }}</div>
-              <div v-if="autoProcessedCount" class="conflict-sidebar-subtitle">已自动处理无冲突文件: {{ autoProcessedCount }} 个
+              <div class="conflict-sidebar-title">
+                冲突文件
               </div>
-              <div v-if="conflictListLoading" class="conflict-sidebar-subtitle">
-                <span class="mini-spinner"></span>
+              <div class="conflict-sidebar-subtitle">
+                已选择: {{ selectedCount }} / {{ conflictFiles.length }}
+              </div>
+              <div
+                v-if="autoProcessedCount"
+                class="conflict-sidebar-subtitle"
+              >
+                已自动处理无冲突文件: {{ autoProcessedCount }} 个
+              </div>
+              <div
+                v-if="conflictListLoading"
+                class="conflict-sidebar-subtitle"
+              >
+                <span class="mini-spinner" />
                 冲突列表拉取中...
               </div>
-              <div v-if="conflictListError" class="conflict-sidebar-subtitle">{{ conflictListError }}</div>
-              <div v-if="uiError" class="conflict-sidebar-subtitle">{{ uiError }}</div>
+              <div
+                v-if="conflictListError"
+                class="conflict-sidebar-subtitle"
+              >
+                {{ conflictListError }}
+              </div>
+              <div
+                v-if="uiError"
+                class="conflict-sidebar-subtitle"
+              >
+                {{ uiError }}
+              </div>
               <div class="conflict-sidebar-actions">
-                <n-button :disabled="loading" @click="selectAll">全选</n-button>
-                <n-button :disabled="loading" @click="selectNone">全不选</n-button>
-                <n-button :disabled="loading" @click="selectUnresolved">仅选未解决</n-button>
+                <n-button
+                  :disabled="loading"
+                  @click="selectAll"
+                >
+                  全选
+                </n-button>
+                <n-button
+                  :disabled="loading"
+                  @click="selectNone"
+                >
+                  全不选
+                </n-button>
+                <n-button
+                  :disabled="loading"
+                  @click="selectUnresolved"
+                >
+                  仅选未解决
+                </n-button>
               </div>
             </div>
             <div class="conflict-file-list">
               <n-checkbox-group v-model:value="selectedPaths">
-                <div v-for="f in conflictFiles" :key="f.new_path" class="conflict-file-row"
-                  :class="{ active: f.new_path === currentFile?.new_path }" @click="loading || openFile(f)">
-                  <label class="conflict-file-check" @click.stop>
-                    <n-checkbox :disabled="loading" :value="f.new_path" />
+                <div
+                  v-for="f in conflictFiles"
+                  :key="f.new_path"
+                  class="conflict-file-row"
+                  :class="{ active: f.new_path === currentFile?.new_path }"
+                  @click="loading || openFile(f)"
+                >
+                  <label
+                    class="conflict-file-check"
+                    @click.stop
+                  >
+                    <n-checkbox
+                      :disabled="loading"
+                      :value="f.new_path"
+                    />
                   </label>
-                  <n-button :disabled="loading" @click.stop="openFile(f)">
-                    <span class="conflict-file-path" :title="f.new_path">{{ f.new_path }}</span>
+                  <n-button
+                    :disabled="loading"
+                    @click.stop="openFile(f)"
+                  >
+                    <span
+                      class="conflict-file-path"
+                      :title="f.new_path"
+                    >{{ f.new_path }}</span>
                     <div class="conflict-file-meta">
-                      <span class="conflict-file-status" :class="{ ok: isResolved(f.new_path) }">
+                      <span
+                        class="conflict-file-status"
+                        :class="{ ok: isResolved(f.new_path) }"
+                      >
                         {{ isResolved(f.new_path) ? '已解决' : '未解决' }}
                       </span>
-                      <span v-if="choiceLabel(f.new_path)" class="conflict-file-choice">
+                      <span
+                        v-if="choiceLabel(f.new_path)"
+                        class="conflict-file-choice"
+                      >
                         {{ choiceLabel(f.new_path) }}
                       </span>
                     </div>
                   </n-button>
                   <div class="conflict-file-actions">
-                    <n-button :disabled="loading" @click.stop="openDiff(f)">差异</n-button>
+                    <n-button
+                      :disabled="loading"
+                      @click.stop="openDiff(f)"
+                    >
+                      差异
+                    </n-button>
                   </div>
                 </div>
               </n-checkbox-group>
             </div>
-            <div v-if="opHistory.length" class="conflict-history">
-              <div class="conflict-history-title">操作记录</div>
+            <div
+              v-if="opHistory.length"
+              class="conflict-history"
+            >
+              <div class="conflict-history-title">
+                操作记录
+              </div>
               <div class="conflict-history-list">
-                <div v-for="(h, idx) in opHistory" :key="idx" class="conflict-history-item">{{ h }}</div>
+                <div
+                  v-for="(h, idx) in opHistory"
+                  :key="idx"
+                  class="conflict-history-item"
+                >
+                  {{ h }}
+                </div>
               </div>
             </div>
           </div>
 
           <div class="conflict-editor-main">
-            <div v-if="conflictFiles.length" class="merge-panes-header">
+            <div
+              v-if="conflictFiles.length"
+              class="merge-panes-header"
+            >
               <template v-if="compactMode">
                 <n-button @click="setVisiblePane('left')">
                   本地（{{ target }}）
@@ -110,119 +245,311 @@
                 </n-button>
               </template>
               <template v-else>
-                <div class="merge-pane-title">本地版本（{{ target }}）</div>
-                <div class="merge-pane-title middle">合并基础（可编辑）</div>
-                <div class="merge-pane-title">远程版本（{{ source }}）</div>
+                <div class="merge-pane-title">
+                  本地版本（{{ target }}）
+                </div>
+                <div class="merge-pane-title middle">
+                  合并基础（可编辑）
+                </div>
+                <div class="merge-pane-title">
+                  远程版本（{{ source }}）
+                </div>
               </template>
             </div>
             <div class="conflict-editor-host">
-              <div class="pane-wrap" :class="{ hidden: compactMode && visiblePane !== 'left' }">
-                <div ref="editorLeftContainer" class="pane"></div>
+              <div
+                class="pane-wrap"
+                :class="{ hidden: compactMode && visiblePane !== 'left' }"
+              >
+                <div
+                  ref="editorLeftContainer"
+                  class="pane"
+                />
               </div>
-              <div ref="editorMiddleWrap" class="pane-wrap middle"
-                :class="{ hidden: compactMode && visiblePane !== 'middle' }">
-                <div ref="editorMiddleContainer" class="pane"></div>
-                <div v-if="webstormOverlayItems.length" class="webstorm-merge-overlay">
-                  <div v-for="it in webstormOverlayItems" :key="it.id" class="webstorm-merge-control"
-                    :style="{ top: it.top + 'px' }">
-                    <n-button @click="applySideToBlock('left', it.id)">→</n-button>
-                    <n-button @click="applySideToBlock('right', it.id)">←</n-button>
+              <div
+                ref="editorMiddleWrap"
+                class="pane-wrap middle"
+                :class="{ hidden: compactMode && visiblePane !== 'middle' }"
+              >
+                <div
+                  ref="editorMiddleContainer"
+                  class="pane"
+                />
+                <div
+                  v-if="webstormOverlayItems.length"
+                  class="webstorm-merge-overlay"
+                >
+                  <div
+                    v-for="it in webstormOverlayItems"
+                    :key="it.id"
+                    class="webstorm-merge-control"
+                    :style="{ top: it.top + 'px' }"
+                  >
+                    <n-button @click="applySideToBlock('left', it.id)">
+                      →
+                    </n-button>
+                    <n-button @click="applySideToBlock('right', it.id)">
+                      ←
+                    </n-button>
                   </div>
                 </div>
               </div>
-              <div class="pane-wrap" :class="{ hidden: compactMode && visiblePane !== 'right' }">
-                <div ref="editorRightContainer" class="pane"></div>
+              <div
+                class="pane-wrap"
+                :class="{ hidden: compactMode && visiblePane !== 'right' }"
+              >
+                <div
+                  ref="editorRightContainer"
+                  class="pane"
+                />
               </div>
             </div>
-            <div v-if="loading" class="conflict-overlay">
+            <div
+              v-if="loading"
+              class="conflict-overlay"
+            >
               <span class="conflict-overlay-text">加载文件内容中...</span>
             </div>
-            <div v-else-if="conflictCountScan.running" class="conflict-overlay">
+            <div
+              v-else-if="conflictCountScan.running"
+              class="conflict-overlay"
+            >
               <span class="conflict-overlay-text">正在统计冲突块并过滤无冲突文件...</span>
             </div>
-            <div v-else-if="fileLoadError" class="conflict-overlay">
+            <div
+              v-else-if="fileLoadError"
+              class="conflict-overlay"
+            >
               <div class="conflict-empty">
-                <p class="conflict-empty-title">文件加载失败</p>
-                <p class="conflict-empty-subtitle">{{ fileLoadError }}</p>
+                <p class="conflict-empty-title">
+                  文件加载失败
+                </p>
+                <p class="conflict-empty-subtitle">
+                  {{ fileLoadError }}
+                </p>
               </div>
             </div>
-            <div v-else-if="conflictFiles.length === 0 && pendingActionsCount === 0"
-              class="conflict-overlay scrollable">
+            <div
+              v-else-if="conflictFiles.length === 0 && pendingActionsCount === 0"
+              class="conflict-overlay scrollable"
+            >
               <div class="conflict-empty">
-                <p class="conflict-empty-title">未找到冲突文件</p>
-                <p class="conflict-empty-subtitle">GitLab API 返回的冲突列表为空。可能是二进制文件冲突或已被其他操作解决。</p>
+                <p class="conflict-empty-title">
+                  未找到冲突文件
+                </p>
+                <p class="conflict-empty-subtitle">
+                  GitLab API 返回的冲突列表为空。可能是二进制文件冲突或已被其他操作解决。
+                </p>
                 <div class="conflict-empty-actions">
-                  <n-button :disabled="loading || emptyRefreshLoading" @click="refreshConflictList">
+                  <n-button
+                    :disabled="loading || emptyRefreshLoading"
+                    @click="refreshConflictList"
+                  >
                     {{ emptyRefreshLoading ? '拉取中...' : '重新拉取冲突列表' }}
                   </n-button>
-                  <n-button :disabled="loading || emptyMrRefreshLoading" @click="refreshMrStatus">
+                  <n-button
+                    :disabled="loading || emptyMrRefreshLoading"
+                    @click="refreshMrStatus"
+                  >
                     {{ emptyMrRefreshLoading ? '刷新中...' : '刷新 MR 状态' }}
                   </n-button>
-                  <n-button :disabled="loading || localGitLoading" @click="prepareLocalGitConflicts">
+                  <n-button
+                    :disabled="loading || localGitLoading"
+                    @click="prepareLocalGitConflicts"
+                  >
                     {{ localGitLoading ? '本地检测中...' : '使用本地 Git 检测冲突' }}
                   </n-button>
                 </div>
-                <p v-if="emptyRefreshError" class="conflict-empty-subtitle">{{ emptyRefreshError }}</p>
-                <p v-if="emptyMrRefreshError" class="conflict-empty-subtitle">{{ emptyMrRefreshError }}</p>
-                <p v-if="localGitError" class="conflict-empty-subtitle">{{ localGitError }}</p>
-                <div v-if="emptyStateAnalysis.length" class="conflict-empty-files">
-                  <div class="conflict-empty-files-title">可能原因与建议</div>
+                <p
+                  v-if="emptyRefreshError"
+                  class="conflict-empty-subtitle"
+                >
+                  {{ emptyRefreshError }}
+                </p>
+                <p
+                  v-if="emptyMrRefreshError"
+                  class="conflict-empty-subtitle"
+                >
+                  {{ emptyMrRefreshError }}
+                </p>
+                <p
+                  v-if="localGitError"
+                  class="conflict-empty-subtitle"
+                >
+                  {{ localGitError }}
+                </p>
+                <div
+                  v-if="emptyStateAnalysis.length"
+                  class="conflict-empty-files"
+                >
+                  <div class="conflict-empty-files-title">
+                    可能原因与建议
+                  </div>
                   <div class="conflict-empty-files-list">
-                    <div v-for="(t, idx) in emptyStateAnalysis" :key="'a' + idx" class="conflict-empty-file">{{ t }}
+                    <div
+                      v-for="(t, idx) in emptyStateAnalysis"
+                      :key="'a' + idx"
+                      class="conflict-empty-file"
+                    >
+                      {{ t }}
                     </div>
-                    <div class="conflict-empty-file">建议操作：1) 点击“重新拉取冲突列表”；2) 若 MR 状态已不冲突，点击“我已在 GitLab 解决”继续检测；3)
-                      若持续为空且提示权限异常，请更换有权限的 Token。</div>
+                    <div class="conflict-empty-file">
+                      建议操作：1) 点击“重新拉取冲突列表”；2) 若 MR 状态已不冲突，点击“我已在 GitLab 解决”继续检测；3)
+                      若持续为空且提示权限异常，请更换有权限的 Token。
+                    </div>
                   </div>
                 </div>
-                <p v-if="relatedFilesLoading" class="conflict-empty-subtitle">正在获取 MR 变更文件列表...</p>
-                <p v-else-if="relatedFilesError" class="conflict-empty-subtitle">{{ relatedFilesError }}</p>
-                <div v-else-if="relatedFiles.length" class="conflict-empty-files">
-                  <div class="conflict-empty-files-title">MR 变更文件（供排查）</div>
+                <p
+                  v-if="relatedFilesLoading"
+                  class="conflict-empty-subtitle"
+                >
+                  正在获取 MR 变更文件列表...
+                </p>
+                <p
+                  v-else-if="relatedFilesError"
+                  class="conflict-empty-subtitle"
+                >
+                  {{ relatedFilesError }}
+                </p>
+                <div
+                  v-else-if="relatedFiles.length"
+                  class="conflict-empty-files"
+                >
+                  <div class="conflict-empty-files-title">
+                    MR 变更文件（供排查）
+                  </div>
                   <div class="conflict-empty-files-list">
-                    <div v-for="(f, idx) in relatedFiles" :key="idx" class="conflict-empty-file file-row">
-                      <n-button :disabled="loading" @click="openAdhocMerge(f)">{{ f }}</n-button>
-                      <n-button :disabled="loading" @click="openAdhocMerge(f)">三方合并</n-button>
+                    <div
+                      v-for="(f, idx) in relatedFiles"
+                      :key="idx"
+                      class="conflict-empty-file file-row"
+                    >
+                      <n-button
+                        :disabled="loading"
+                        @click="openAdhocMerge(f)"
+                      >
+                        {{ f }}
+                      </n-button>
+                      <n-button
+                        :disabled="loading"
+                        @click="openAdhocMerge(f)"
+                      >
+                        三方合并
+                      </n-button>
                     </div>
                   </div>
-                  <div v-if="relatedBinaryCandidates.length" class="conflict-empty-files">
-                    <div class="conflict-empty-files-title">疑似二进制/不可三方合并文件（按扩展名推断）</div>
+                  <div
+                    v-if="relatedBinaryCandidates.length"
+                    class="conflict-empty-files"
+                  >
+                    <div class="conflict-empty-files-title">
+                      疑似二进制/不可三方合并文件（按扩展名推断）
+                    </div>
                     <div class="conflict-empty-files-list">
-                      <div v-for="(f, idx) in relatedBinaryCandidates" :key="idx" class="conflict-empty-file">{{ f }}
+                      <div
+                        v-for="(f, idx) in relatedBinaryCandidates"
+                        :key="idx"
+                        class="conflict-empty-file"
+                      >
+                        {{ f }}
                       </div>
                     </div>
                   </div>
                 </div>
-                <p v-if="gitattributesLoading" class="conflict-empty-subtitle">正在获取 .gitattributes ...</p>
-                <p v-else-if="gitattributesError" class="conflict-empty-subtitle">{{ gitattributesError }}</p>
-                <div v-else-if="gitattributesSource || gitattributesTarget" class="conflict-empty-files">
-                  <div class="conflict-empty-files-title">.gitattributes（供排查）</div>
+                <p
+                  v-if="gitattributesLoading"
+                  class="conflict-empty-subtitle"
+                >
+                  正在获取 .gitattributes ...
+                </p>
+                <p
+                  v-else-if="gitattributesError"
+                  class="conflict-empty-subtitle"
+                >
+                  {{ gitattributesError }}
+                </p>
+                <div
+                  v-else-if="gitattributesSource || gitattributesTarget"
+                  class="conflict-empty-files"
+                >
+                  <div class="conflict-empty-files-title">
+                    .gitattributes（供排查）
+                  </div>
                   <div class="conflict-empty-files-list">
-                    <div class="conflict-empty-file">目标分支({{ target }}):</div>
-                    <div v-if="gitattributesTarget" class="conflict-empty-file pre">{{ gitattributesTarget }}</div>
-                    <div v-else class="conflict-empty-file pre">（不存在或无权限读取）</div>
-                    <div class="conflict-empty-file" style="margin-top: 10px;">源分支({{ source }}):</div>
-                    <div v-if="gitattributesSource" class="conflict-empty-file pre">{{ gitattributesSource }}</div>
-                    <div v-else class="conflict-empty-file pre">（不存在或无权限读取）</div>
+                    <div class="conflict-empty-file">
+                      目标分支({{ target }}):
+                    </div>
+                    <div
+                      v-if="gitattributesTarget"
+                      class="conflict-empty-file pre"
+                    >
+                      {{ gitattributesTarget }}
+                    </div>
+                    <div
+                      v-else
+                      class="conflict-empty-file pre"
+                    >
+                      （不存在或无权限读取）
+                    </div>
+                    <div
+                      class="conflict-empty-file"
+                      style="margin-top: 10px;"
+                    >
+                      源分支({{ source }}):
+                    </div>
+                    <div
+                      v-if="gitattributesSource"
+                      class="conflict-empty-file pre"
+                    >
+                      {{ gitattributesSource }}
+                    </div>
+                    <div
+                      v-else
+                      class="conflict-empty-file pre"
+                    >
+                      （不存在或无权限读取）
+                    </div>
                   </div>
                 </div>
-                <div v-if="conflictApiDebug" class="conflict-empty-files">
-                  <div class="conflict-empty-files-title">冲突接口诊断（脱敏）</div>
+                <div
+                  v-if="conflictApiDebug"
+                  class="conflict-empty-files"
+                >
+                  <div class="conflict-empty-files-title">
+                    冲突接口诊断（脱敏）
+                  </div>
                   <div class="conflict-empty-files-list">
-                    <div class="conflict-empty-file pre">{{ conflictApiDebugText }}</div>
+                    <div class="conflict-empty-file pre">
+                      {{ conflictApiDebugText }}
+                    </div>
                   </div>
                 </div>
-                <div v-if="mrDetailsText" class="conflict-empty-files">
-                  <div class="conflict-empty-files-title">MR 合并状态（供排查）</div>
+                <div
+                  v-if="mrDetailsText"
+                  class="conflict-empty-files"
+                >
+                  <div class="conflict-empty-files-title">
+                    MR 合并状态（供排查）
+                  </div>
                   <div class="conflict-empty-files-list">
-                    <div class="conflict-empty-file pre">{{ mrDetailsText }}</div>
+                    <div class="conflict-empty-file pre">
+                      {{ mrDetailsText }}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-            <div v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0" class="conflict-overlay scrollable">
+            <div
+              v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0"
+              class="conflict-overlay scrollable"
+            >
               <div class="conflict-empty">
-                <p class="conflict-empty-title">无实际冲突</p>
-                <p class="conflict-empty-subtitle">已自动生成并暂存合并结果，可直接完成合并。</p>
+                <p class="conflict-empty-title">
+                  无实际冲突
+                </p>
+                <p class="conflict-empty-subtitle">
+                  已自动生成并暂存合并结果，可直接完成合并。
+                </p>
               </div>
             </div>
           </div>
@@ -236,27 +563,82 @@
         </div>
         <div class="conflict-footer-actions">
           <template v-if="conflictFiles.length === 0 && pendingActionsCount === 0">
-            <n-button :disabled="loading" @click="cancelMerge">取消合并</n-button>
-            <n-button :disabled="loading" @click="confirmResolvedExternally">我已在 GitLab
-              解决，继续检测</n-button>
+            <n-button
+              :disabled="loading"
+              @click="cancelMerge"
+            >
+              取消合并
+            </n-button>
+            <n-button
+              :disabled="loading"
+              @click="confirmResolvedExternally"
+            >
+              我已在 GitLab
+              解决，继续检测
+            </n-button>
           </template>
           <template v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0">
-            <n-button :disabled="loading" @click="cancelMerge">取消合并</n-button>
-            <n-button :disabled="loading" @click="openFinalConfirm">完成合并</n-button>
+            <n-button
+              :disabled="loading"
+              @click="cancelMerge"
+            >
+              取消合并
+            </n-button>
+            <n-button
+              :disabled="loading"
+              @click="openFinalConfirm"
+            >
+              完成合并
+            </n-button>
           </template>
           <template v-else>
-            <n-button :disabled="loading" @click="acceptCurrentBranch">接受本地更改</n-button>
-            <n-button :disabled="loading" @click="acceptTargetBranch">接受远程更改</n-button>
-            <n-button :disabled="loading" @click="acceptBothBranches">接受两者</n-button>
-            <n-button :disabled="loading || gitMergeLoading" @click="applyGitThreeWayMergeToResult">
+            <n-button
+              :disabled="loading"
+              @click="acceptCurrentBranch"
+            >
+              接受本地更改
+            </n-button>
+            <n-button
+              :disabled="loading"
+              @click="acceptTargetBranch"
+            >
+              接受远程更改
+            </n-button>
+            <n-button
+              :disabled="loading"
+              @click="acceptBothBranches"
+            >
+              接受两者
+            </n-button>
+            <n-button
+              :disabled="loading || gitMergeLoading"
+              @click="applyGitThreeWayMergeToResult"
+            >
               {{ gitMergeLoading ? 'Git 合并中...' : 'Git 三方合并' }}
             </n-button>
-            <n-button :disabled="loading" @click="undoEdit">撤销</n-button>
-            <n-button :disabled="loading || !isResolved(currentFile?.new_path)"
-              @click="unstageCurrentFile">撤销暂存</n-button>
+            <n-button
+              :disabled="loading"
+              @click="undoEdit"
+            >
+              撤销
+            </n-button>
+            <n-button
+              :disabled="loading || !isResolved(currentFile?.new_path)"
+              @click="unstageCurrentFile"
+            >
+              撤销暂存
+            </n-button>
             <div class="footer-action-group">
-              <n-button :disabled="loading" @click="cancelMerge">取消合并</n-button>
-              <n-button :disabled="loading" @click="markResolved">
+              <n-button
+                :disabled="loading"
+                @click="cancelMerge"
+              >
+                取消合并
+              </n-button>
+              <n-button
+                :disabled="loading"
+                @click="markResolved"
+              >
                 {{ isAllResolved ? '完成合并' : '下一个文件' }}
               </n-button>
             </div>
@@ -264,26 +646,47 @@
         </div>
       </div>
 
-      <div v-if="diffVisible" class="conflict-overlay">
+      <div
+        v-if="diffVisible"
+        class="conflict-overlay"
+      >
         <div class="diff-dialog">
           <div class="diff-header">
-            <div class="diff-title">查看差异: {{ diffFilePath }}</div>
-            <n-button @click="closeDiff">关闭</n-button>
+            <div class="diff-title">
+              查看差异: {{ diffFilePath }}
+            </div>
+            <n-button @click="closeDiff">
+              关闭
+            </n-button>
           </div>
           <div class="diff-body">
             <div class="diff-panel">
-              <div class="diff-panel-title">本地版本 ({{ target }})</div>
+              <div class="diff-panel-title">
+                本地版本 ({{ target }})
+              </div>
               <div class="diff-code">
-                <div v-for="l in diffLines" :key="'l' + l.no" class="diff-line" :class="{ changed: l.changed }">
+                <div
+                  v-for="l in diffLines"
+                  :key="'l' + l.no"
+                  class="diff-line"
+                  :class="{ changed: l.changed }"
+                >
                   <span class="diff-no">{{ l.no }}</span>
                   <span class="diff-text">{{ l.left }}</span>
                 </div>
               </div>
             </div>
             <div class="diff-panel">
-              <div class="diff-panel-title">远程版本 ({{ source }})</div>
+              <div class="diff-panel-title">
+                远程版本 ({{ source }})
+              </div>
               <div class="diff-code">
-                <div v-for="l in diffLines" :key="'r' + l.no" class="diff-line" :class="{ changed: l.changed }">
+                <div
+                  v-for="l in diffLines"
+                  :key="'r' + l.no"
+                  class="diff-line"
+                  :class="{ changed: l.changed }"
+                >
                   <span class="diff-no">{{ l.no }}</span>
                   <span class="diff-text">{{ l.right }}</span>
                 </div>
@@ -293,35 +696,78 @@
         </div>
       </div>
 
-      <div v-if="finalConfirmVisible" class="conflict-overlay">
+      <div
+        v-if="finalConfirmVisible"
+        class="conflict-overlay"
+      >
         <div class="confirm-dialog">
-          <div class="confirm-title">最终确认</div>
-          <div class="confirm-subtitle">可选择提交到源分支，或使用 GitLab resolve_conflicts 提交并标记冲突已解决。</div>
-          <div v-if="autoProcessedCount" class="confirm-subtitle">包含已自动处理文件，无法使用 GitLab 提交，请选择“提交到源分支”。</div>
+          <div class="confirm-title">
+            最终确认
+          </div>
+          <div class="confirm-subtitle">
+            可选择提交到源分支，或使用 GitLab resolve_conflicts 提交并标记冲突已解决。
+          </div>
+          <div
+            v-if="autoProcessedCount"
+            class="confirm-subtitle"
+          >
+            包含已自动处理文件，无法使用 GitLab 提交，请选择“提交到源分支”。
+          </div>
           <div class="confirm-list">
-            <div v-for="f in conflictFiles" :key="f.new_path" class="confirm-item">
+            <div
+              v-for="f in conflictFiles"
+              :key="f.new_path"
+              class="confirm-item"
+            >
               <span class="confirm-path">{{ f.new_path }}</span>
               <span class="confirm-tag">冲突块: {{ typeof f?.conflict_block_count === 'number' && f.conflict_block_count >=
                 0 ?
-                f.conflict_block_count : '未知' }}</span>
-              <span class="confirm-tag" :class="{ ok: isResolved(f.new_path) }">{{ isResolved(f.new_path) ? '已暂存' :
+                  f.conflict_block_count : '未知' }}</span>
+              <span
+                class="confirm-tag"
+                :class="{ ok: isResolved(f.new_path) }"
+              >{{ isResolved(f.new_path) ? '已暂存' :
                 '未暂存'
-                }}</span>
+              }}</span>
               <span class="confirm-tag">{{ choiceLabel(f.new_path) || '未选择' }}</span>
             </div>
           </div>
           <div class="confirm-commit">
-            <div class="confirm-commit-title">提交说明（commit message）</div>
-            <n-input v-model:value="commitMessage" :disabled="loading" type="textarea" placeholder="请输入提交说明" />
-            <n-checkbox v-model:checked="sourceMapsToHead" :disabled="loading">
+            <div class="confirm-commit-title">
+              提交说明（commit message）
+            </div>
+            <n-input
+              v-model:value="commitMessage"
+              :disabled="loading"
+              placeholder="请输入提交说明"
+              type="textarea"
+            />
+            <n-checkbox
+              v-model:checked="sourceMapsToHead"
+              :disabled="loading"
+            >
               源分支对应 head（目标分支对应 origin）
             </n-checkbox>
           </div>
           <div class="confirm-actions">
-            <n-button :disabled="loading" @click="finalConfirmVisible = false">返回继续编辑</n-button>
-            <n-button :disabled="loading || resolveConflictsLoading || !canResolveWithGitlab"
-              @click="confirmAndResolveConflicts">{{ resolveConflictsLoading ? '提交中...' : '使用 GitLab 提交' }}</n-button>
-            <n-button :disabled="loading || !canFinish" @click="confirmAndCommit">提交到源分支</n-button>
+            <n-button
+              :disabled="loading"
+              @click="finalConfirmVisible = false"
+            >
+              返回继续编辑
+            </n-button>
+            <n-button
+              :disabled="loading || resolveConflictsLoading || !canResolveWithGitlab"
+              @click="confirmAndResolveConflicts"
+            >
+              {{ resolveConflictsLoading ? '提交中...' : '使用 GitLab 提交' }}
+            </n-button>
+            <n-button
+              :disabled="loading || !canFinish"
+              @click="confirmAndCommit"
+            >
+              提交到源分支
+            </n-button>
           </div>
         </div>
       </div>
@@ -2333,7 +2779,7 @@ async function loadFile(file: any) {
       if (baseCommit) {
         try {
           baseContent = await getFileContent({ projectId: projectId.value, filePath: basePath || filePath, ref: baseCommit });
-        } catch (e1) {
+        } catch {
           if (sourcePath && sourcePath !== (basePath || filePath)) {
             try {
               baseContent = await getFileContent({ projectId: projectId.value, filePath: sourcePath, ref: baseCommit });
@@ -3854,12 +4300,14 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     font-size: 13px;
     color: $text-main;
     font-family: $font-mono;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.4;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.6;
+    letter-spacing: 0.2px;
+    padding: 2px 0;
     display: block;
-    width: 100%; // Force width to match parent for ellipsis
+    width: 100%;
   }
 
   .conflict-file-meta {
@@ -3987,11 +4435,11 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 .merge-panes-header {
   display: flex;
   align-items: center;
-  height: 40px;
+  min-height: 40px;
   background: $bg-gray;
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
-  padding: 0 10px;
+  padding: 6px 10px;
   gap: 0;
 
   .merge-pane-title {
@@ -4003,9 +4451,11 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     font-weight: 600;
     color: $text-secondary;
     padding: 0 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.3;
+    letter-spacing: 0.2px;
 
     &.middle {
       color: $primary;
@@ -4390,7 +4840,7 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
     .confirm-item {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       padding: 12px 24px;
       border-bottom: 1px solid $border-color;
@@ -4404,10 +4854,14 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         font-family: $font-mono;
         font-size: 13px;
         color: $text-main;
-        flex: 1;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        line-height: 1.6;
+        letter-spacing: 0.2px;
+        padding: 2px 0;
         margin-right: 12px;
       }
 

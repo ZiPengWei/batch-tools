@@ -1,6 +1,10 @@
 import { defineStore } from "pinia";
 import { batchMerge, onBatchMergeLog } from "../ipc/bridge";
 
+const isE2E =
+  (import.meta as any).env?.VITE_E2E === "1" ||
+  String((import.meta as any).env?.MODE || "").toLowerCase() === "e2e";
+
 export type MergeRunSummary =
   | {
       ok: true;
@@ -153,6 +157,29 @@ export const useMergeStore = defineStore("merge", {
       const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       this.activeRunId = runId;
       this.log("=== 开始批量合并 ===");
+
+      if (isE2E) {
+        try {
+          const steps = Math.min(200, Math.max(30, totalOps * 2));
+          await new Promise<void>((resolve) => {
+            let i = 0;
+            const timer = window.setInterval(() => {
+              i += 1;
+              this.log(`E2E step ${i}/${steps}`);
+              this.progressValue = Math.min(this.progressMax, Math.floor((i / steps) * this.progressMax));
+              if (i >= steps) {
+                window.clearInterval(timer);
+                resolve();
+              }
+            }, 20);
+          });
+          this.log(`全部已合并，成功 MR 数量：${totalOps}`);
+          return { ok: true, mergedCount: totalOps, noopCount: 0 };
+        } finally {
+          this.running = false;
+          this.activeRunId = "";
+        }
+      }
 
       const payload = {
         projectId,

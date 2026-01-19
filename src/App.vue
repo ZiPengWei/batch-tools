@@ -1,19 +1,451 @@
+<template>
+  <n-config-provider>
+    <n-global-style />
+    <n-message-provider>
+      <n-dialog-provider>
+        <n-notification-provider>
+          <n-loading-bar-provider>
+            <n-flex
+              :class="'app-root'"
+              :style="[styles.contentInner, styles.listThemeVars]"
+              vertical
+            >
+              <div
+                :style="styles.authCardWrap"
+              >
+                <n-card
+                  :segmented="{ content: true }"
+                  title="GitLab 认证"
+                >
+                  <template #header-extra>
+                    <n-space align="center">
+                      <n-tag
+                        v-if="auth.connected"
+                        round
+                        type="success"
+                      >
+                        已连接: {{ auth.userName }}
+                      </n-tag>
+                      <n-tag
+                        v-else
+                        round
+                        type="default"
+                      >
+                        未连接
+                      </n-tag>
+                      <n-button
+                        text
+                        type="primary"
+                        @click="isAuthExpanded = !isAuthExpanded"
+                      >
+                        {{ isAuthExpanded ? '收起' : '配置' }}
+                      </n-button>
+                    </n-space>
+                  </template>
+                  <n-collapse-transition :show="isAuthExpanded">
+                    <n-space
+                      :style="styles.authPanel"
+                      vertical
+                    >
+                      <n-grid
+                        :cols="24"
+                        :x-gap="24"
+                      >
+                        <n-grid-item :span="12">
+                          <n-space vertical>
+                            <n-text
+                              depth="3"
+                              :style="styles.caption"
+                            >
+                              GitLab URL
+                            </n-text>
+                            <n-input
+                              v-model:value="auth.baseUrl"
+                              placeholder="http://..."
+                            />
+                          </n-space>
+                        </n-grid-item>
+                        <n-grid-item :span="12">
+                          <n-space vertical>
+                            <n-text
+                              depth="3"
+                              :style="styles.caption"
+                            >
+                              Access Token
+                            </n-text>
+                            <n-input
+                              v-model:value="auth.token"
+                              placeholder="glpat-..."
+                              show-password-on="click"
+                              type="password"
+                            />
+                          </n-space>
+                        </n-grid-item>
+                      </n-grid>
+                      <n-space align="center">
+                        <n-button
+                          :disabled="auth.busy"
+                          :loading="auth.busy"
+                          type="primary"
+                          @click="auth.connect()"
+                        >
+                          {{ auth.busy ? '验证中...' : '验证并连接' }}
+                        </n-button>
+                        <n-checkbox v-model:checked="auth.rememberToken">
+                          保存 Token
+                        </n-checkbox>
+                      </n-space>
+                      <n-text
+                        v-if="auth.connected && projects.loading"
+                        depth="3"
+                        :style="styles.caption"
+                      >
+                        <n-spin :style="styles.inlineSpinner" />
+                        正在刷新项目列表...
+                      </n-text>
+                      <n-text
+                        v-if="auth.error"
+                        :style="styles.caption"
+                        type="error"
+                      >
+                        {{ auth.error }}
+                      </n-text>
+                    </n-space>
+                  </n-collapse-transition>
+                  <n-collapse-transition :show="!isAuthExpanded">
+                    <div
+                      v-if="!isAuthExpanded"
+                      :style="styles.authCollapsed"
+                    >
+                      <div :style="styles.authCollapsedRow">
+                        <n-text
+                          depth="3"
+                          :style="styles.caption"
+                        >
+                          {{ auth.baseUrl || '未设置 GitLab URL' }}
+                        </n-text>
+                        <n-text
+                          v-if="auth.connected"
+                          depth="3"
+                          :style="styles.caption"
+                        >
+                          项目：{{ projects.items.length }} 个
+                        </n-text>
+                      </div>
+                    </div>
+                  </n-collapse-transition>
+                </n-card>
+              </div>
+
+              <div
+                :style="styles.tripleRow"
+              >
+                <div :style="styles.col">
+                  <n-card
+                    :content-style="styles.cardContent"
+                    :style="styles.card"
+                    title="1. 选择项目"
+                  >
+                    <template #header-extra>
+                      <n-button
+                        :disabled="!canUseContent || projects.loading"
+                        text
+                        type="primary"
+                        @click="projects.loadProjects()"
+                      >
+                        {{ projects.loading ? '加载中...' : '刷新' }}
+                      </n-button>
+                    </template>
+                    <div :style="styles.fill">
+                      <n-input
+                        v-model:value="projects.filter"
+                        clearable
+                        :disabled="!canUseContent"
+                        placeholder="过滤项目..."
+                        @update:value="projects.setFilter"
+                      />
+                      <div
+                        aria-label="项目列表"
+                        :style="styles.scrollArea"
+                        @scroll="onProjectScroll"
+                      >
+                        <div :style="projectAtTop ? styles.shadowHidden : styles.scrollShadowTop" />
+                        <div :style="projectAtBottom ? styles.shadowHidden : styles.scrollShadowBottom" />
+                        <div :style="styles.scrollInner">
+                          <div
+                            v-if="projects.filteredItems.length"
+                            :style="styles.listStack"
+                          >
+                            <n-button
+                              v-for="p in projects.filteredItems"
+                              :key="p.id"
+                              block
+                              :class="'gl-list-item'"
+                              :data-item-key="String(p.id)"
+                              :data-selected="projects.selectedProjectId === p.id ? 'true' : 'false'"
+                              :style="styles.listItemButton"
+                              text
+                              :title="p.display"
+                              :type="projects.selectedProjectId === p.id ? 'primary' : 'default'"
+                              @click="onClickProject(p, $event)"
+                            >
+                              <span class="gl-ellipsis-1">{{ p.display }}</span>
+                            </n-button>
+                          </div>
+                          <div
+                            v-else
+                            :style="styles.emptyFill"
+                          >
+                            <template v-if="projects.loading">
+                              <n-spin />
+                              <n-text
+                                depth="3"
+                                :style="styles.caption"
+                              >
+                                加载中...
+                              </n-text>
+                            </template>
+                            <n-empty
+                              v-else
+                              :description="projects.items.length ? '无匹配项目' : '暂无数据'"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <n-text
+                        depth="3"
+                        :style="styles.caption"
+                      >
+                        已选: {{ projects.selectedProjectName || '(无)' }}
+                      </n-text>
+                    </div>
+                  </n-card>
+                </div>
+
+                <div :style="styles.col">
+                  <n-card
+                    :content-style="styles.cardContent"
+                    :style="styles.card"
+                    title="2. 选择源分支"
+                  >
+                    <template #header-extra>
+                      <n-button
+                        :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                        text
+                        type="primary"
+                        @click="projects.loadAllBranches()"
+                      >
+                        {{ projects.sourceBranchesLoading ? '加载中...' : '刷新' }}
+                      </n-button>
+                    </template>
+                    <div :style="styles.fill">
+                      <n-input
+                        v-model:value="sourceFilter"
+                        clearable
+                        :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                        placeholder="过滤源分支..."
+                      />
+                      <div
+                        aria-label="源分支列表"
+                        :style="styles.scrollArea"
+                        @scroll="onSourceScroll"
+                      >
+                        <div :style="sourceAtTop ? styles.shadowHidden : styles.scrollShadowTop" />
+                        <div :style="sourceAtBottom ? styles.shadowHidden : styles.scrollShadowBottom" />
+                        <div :style="styles.scrollInner">
+                          <div
+                            v-if="displaySourceBranches.length"
+                            :style="styles.listStack"
+                          >
+                            <n-button
+                              v-for="b in displaySourceBranches"
+                              :key="b"
+                              block
+                              :class="'gl-list-item'"
+                              :data-item-key="b"
+                              :data-selected="projects.selectedSourceBranch === b ? 'true' : 'false'"
+                              :style="styles.listItemButton"
+                              text
+                              :title="b"
+                              :type="projects.selectedSourceBranch === b ? 'primary' : 'default'"
+                              @click="onClickSourceBranch(b, $event)"
+                            >
+                              <span class="gl-ellipsis-1">{{ b }}</span>
+                            </n-button>
+                          </div>
+                          <div
+                            v-else
+                            :style="styles.emptyFill"
+                          >
+                            <template v-if="projects.sourceBranchesLoading">
+                              <n-spin />
+                              <n-text
+                                depth="3"
+                                :style="styles.caption"
+                              >
+                                加载中...
+                              </n-text>
+                            </template>
+                            <n-empty
+                              v-else
+                              :description="projects.sourceBranches?.length && sourceFilter.trim() ? '无匹配' : '暂无数据'"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <n-text
+                        depth="3"
+                        :style="styles.caption"
+                      >
+                        共 {{ displaySourceBranches.length }} 个分支
+                      </n-text>
+                    </div>
+                  </n-card>
+                </div>
+
+                <div :style="styles.col">
+                  <n-card
+                    :content-style="styles.cardContent"
+                    :style="styles.card"
+                    title="3. 选择目标分支"
+                  >
+                    <template #header-extra>
+                      <n-button
+                        :disabled="merge.running || !projects.selectedProjectId || !projects.selectedSourceBranch || !merge.selectedTargets.length"
+                        :loading="merge.running"
+                        type="primary"
+                        @click="onClickBatch"
+                      >
+                        {{ merge.running ? '处理中...' : mergeButtonText }}
+                      </n-button>
+                    </template>
+                    <div :style="styles.fill">
+                      <n-input
+                        v-model:value="merge.targetFilter"
+                        clearable
+                        placeholder="过滤目标分支..."
+                      />
+                      <div
+                        aria-label="目标分支列表"
+                        :style="styles.scrollArea"
+                        @scroll="onTargetScroll"
+                      >
+                        <div :style="targetAtTop ? styles.shadowHidden : styles.scrollShadowTop" />
+                        <div :style="targetAtBottom ? styles.shadowHidden : styles.scrollShadowBottom" />
+                        <div :style="styles.scrollInner">
+                          <div
+                            v-if="displayTargetRows.length"
+                            :style="styles.listStack"
+                          >
+                            <template
+                              v-for="(row, idx) in displayTargetRows"
+                              :key="row.type === 'separator' ? `sep-${idx}` : row.name"
+                            >
+                              <div
+                                v-if="row.type === 'separator'"
+                                :style="styles.listSeparator"
+                              />
+                              <n-button
+                                v-else
+                                block
+                                :class="'gl-list-item'"
+                                :data-item-key="row.name"
+                                :data-selected="merge.selectedTargets.includes(row.name) ? 'true' : 'false'"
+                                :style="styles.listItemButton"
+                                text
+                                :title="row.name"
+                                :type="merge.selectedTargets.includes(row.name) ? 'primary' : 'default'"
+                                @click="onClickTargetRow(row.name, $event)"
+                              >
+                                <template
+                                  v-if="row.isCore"
+                                  #icon
+                                >
+                                  <span :style="styles.starIcon">★</span>
+                                </template>
+                                <span class="gl-ellipsis-1">{{ row.name }}</span>
+                              </n-button>
+                            </template>
+                          </div>
+                          <div
+                            v-else
+                            :style="styles.emptyFill"
+                          >
+                            <template v-if="projects.targetBranchesLoading">
+                              <n-spin />
+                              <n-text
+                                depth="3"
+                                :style="styles.caption"
+                              >
+                                加载中...
+                              </n-text>
+                            </template>
+                            <n-empty
+                              v-else
+                              description="暂无数据"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <n-text
+                        depth="3"
+                        :style="styles.caption"
+                      >
+                        已选: {{ merge.selectedTargets.length }} 个
+                      </n-text>
+                    </div>
+                  </n-card>
+                </div>
+              </div>
+            </n-flex>
+
+            <BatchMergeFlowDialog
+              ref="batchMergeFlowDialogRef"
+              :conflict-active="conflictVisible"
+              :conflict-mr-web-url="conflictMrWebUrl"
+            />
+
+            <ConflictDialog
+              v-if="conflictVisible"
+              :conflict-data="conflictData"
+              :visible="conflictVisible"
+              @close="conflictVisible = false"
+              @resolved="onConflictResolved"
+            />
+          </n-loading-bar-provider>
+        </n-notification-provider>
+      </n-dialog-provider>
+    </n-message-provider>
+  </n-config-provider>
+</template>
+
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from './renderer/store/auth'
 import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
-import type { MergeRunSummary } from './renderer/store/merge'
-import { onMergeConflict, openExternal } from './renderer/ipc/bridge'
+import { onMergeConflict } from './renderer/ipc/bridge'
+import BatchMergeFlowDialog, { type BatchMergeFlowDialogExposed } from './renderer/components/BatchMergeFlowDialog.vue'
 import {
   NButton,
   NCheckbox,
   NConfigProvider,
   NDialogProvider,
   NInput,
+  NGlobalStyle,
+  NText,
+  NSpin,
+  NEmpty,
   NLoadingBarProvider,
   NMessageProvider,
   NNotificationProvider,
+  NCard,
+  NGrid,
+  NGridItem,
+  NSpace,
+  NTag,
+  NCollapseTransition,
+  useThemeVars,
 } from './renderer/ui/naive'
 
 const ConflictDialog = defineAsyncComponent(() => import('./renderer/components/ConflictDialog.vue'))
@@ -28,6 +460,193 @@ const sourceBranch = computed(() => projects.selectedSourceBranch)
 const selectedTargets = computed(() => merge.selectedTargets)
 
 const sourceFilter = ref('')
+const viewportWidth = ref<number>(typeof window !== 'undefined' ? window.innerWidth : 1024)
+let resizeTimer: number | null = null
+
+function onResize() {
+  if (resizeTimer != null) window.clearTimeout(resizeTimer)
+  resizeTimer = window.setTimeout(() => {
+    viewportWidth.value = window.innerWidth
+  }, 120)
+}
+
+onMounted(() => {
+  window.addEventListener('resize', onResize, { passive: true })
+  viewportWidth.value = window.innerWidth
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize as any)
+  if (resizeTimer != null) window.clearTimeout(resizeTimer)
+})
+
+const themeVars = useThemeVars()
+
+const styles = computed(() => {
+  const v = themeVars.value
+
+  return {
+    listThemeVars: {
+      '--gl-list-transition': '240ms',
+      '--gl-list-radius': v.borderRadiusSmall,
+      '--gl-list-indicator': v.primaryColor,
+      '--gl-list-indicator-hover': v.primaryColorHover,
+      '--gl-list-bg-hover': `color-mix(in srgb, ${v.primaryColor} 10%, transparent)`,
+      '--gl-list-bg-selected': `color-mix(in srgb, ${v.primaryColor} 16%, transparent)`,
+      '--gl-list-bg-active': `color-mix(in srgb, ${v.primaryColorPressed} 22%, transparent)`,
+      '--gl-list-shadow-hover': v.boxShadow2,
+      '--gl-list-shadow-selected': v.boxShadow3,
+      '--gl-list-focus-ring': `0 0 0 2px color-mix(in srgb, ${v.primaryColor} 38%, transparent)`,
+      '--gl-list-text-selected': v.textColor1,
+    },
+    contentInner: {
+      width: 'min(1200px, 94vw)',
+      height: '100vh',
+      margin: '0 auto',
+      padding: 'min(24px, 4vw)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '16px',
+      flexGrow: 1,
+      flexShrink: 0,
+      boxSizing: 'border-box',
+    },
+    authCardWrap: {
+      flex: '0 0 auto',
+      minHeight: 0,
+    },
+    authPanel: {
+      paddingTop: '12px',
+    },
+    authCollapsed: {
+      paddingTop: '8px',
+    },
+    authCollapsedRow: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: '12px',
+      flexWrap: 'wrap',
+    },
+    caption: {
+      fontSize: '12px',
+    },
+    inlineSpinner: {
+      marginRight: '4px',
+      verticalAlign: 'middle',
+    },
+    tripleRow: {
+      display: 'flex',
+      // flexWrap: 'wrap',
+      gap: '16px',
+      alignItems: 'stretch',
+      alignContent: 'stretch',
+      flex: '1 0 auto',
+      minHeight: 0,
+    },
+    col: {
+      width: 'calc((100% - 32px) / 3)',
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+    },
+    card: {
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+    },
+    cardContent: {
+      display: 'flex',
+      flexDirection: 'column',
+      flex: 1,
+      minHeight: 0,
+      gap: '12px',
+    },
+    fill: {
+      flex: 1,
+      minHeight: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px',
+    },
+    scrollArea: {
+      flex: '1 0 auto',
+      height: 0,
+      border: `1px solid ${v.borderColor}`,
+      borderRadius: v.borderRadiusSmall,
+      padding: '4px',
+      position: 'relative',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      overscrollBehavior: 'contain',
+      scrollBehavior: 'smooth',
+      boxSizing: 'border-box',
+    },
+    scrollInner: {
+      minHeight: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+    },
+    emptyFill: {
+      flex: 1,
+      minHeight: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'column',
+      gap: '8px',
+      padding: '12px',
+      boxSizing: 'border-box',
+    },
+    listStack: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+    },
+    scrollShadowTop: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: '12px',
+      background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0))',
+      pointerEvents: 'none',
+      zIndex: 1,
+    },
+    scrollShadowBottom: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: '12px',
+      background: 'linear-gradient(to top, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0))',
+      pointerEvents: 'none',
+      zIndex: 1,
+    },
+    shadowHidden: {
+      display: 'none',
+    },
+    listItemButton: {
+      justifyContent: 'flex-start',
+      padding: '6px 10px 6px 14px',
+    },
+    listSeparator: {
+      height: '1px',
+      backgroundColor: v.borderColor,
+      margin: '4px 0',
+    },
+    emptyState: {
+      padding: '12px',
+      textAlign: 'center',
+      color: v.textColor3,
+    },
+    starIcon: {
+      color: v.warningColor,
+    },
+  } as const
+})
 
 function isSubsequence(needle: string, haystack: string) {
   if (!needle) return true
@@ -92,6 +711,7 @@ const displayTargetRows = computed<TargetRow[]>(() => {
   })
 
   const rows: TargetRow[] = []
+  rows.map((name) => ({ type: 'branch' as const, name, isCore: true }))
   rows.push(...core.map((name) => ({ type: 'branch' as const, name, isCore: true })))
   if (core.length && others.length) rows.push({ type: 'separator' })
   rows.push(...others.map((name) => ({ type: 'branch' as const, name, isCore: false })))
@@ -101,15 +721,74 @@ const displayTargetRows = computed<TargetRow[]>(() => {
 const mergeButtonText = computed(() => {
   const sc = sourceBranch.value ? 1 : 0
   const tc = selectedTargets.value.length
-  if (sc > 0 && tc > 0) return `开始批量合并 (${sc} 源分支, ${tc} 目标分支)`
-  if (sc > 0) return `开始批量合并 (${sc} 源分支)`
-  return '开始批量合并'
+  if (sc > 0 && tc > 0) return `合并 (${tc})`
+  return '合并'
 })
 
-const showConfirm = ref(false)
-const confirmRunning = ref(false)
-const confirmLogEl = ref<HTMLDivElement | null>(null)
+const batchMergeFlowDialogRef = ref<BatchMergeFlowDialogExposed | null>(null)
+const projectAtTop = ref(true)
+const projectAtBottom = ref(true)
+const sourceAtTop = ref(true)
+const sourceAtBottom = ref(true)
+const targetAtTop = ref(true)
+const targetAtBottom = ref(true)
+const lastTargetClicked = ref<string>('')
 const isAuthExpanded = ref(true)
+
+function scrollEventTargetIntoView(e: MouseEvent) {
+  const el = e.currentTarget as HTMLElement | null
+  if (!el) return
+  const fn = (el as any).scrollIntoView as undefined | ((options?: any) => void)
+  if (typeof fn !== 'function') return
+  fn.call(el, { block: 'nearest' })
+}
+
+function updateScrollShadow(el: HTMLElement, atTop: { value: boolean }, atBottom: { value: boolean }) {
+  const st = Number((el as any).scrollTop) || 0
+  const ch = Number(el.clientHeight) || 0
+  const sh = Number(el.scrollHeight) || 0
+
+  atTop.value = st <= 0
+  atBottom.value = sh <= ch || st + ch >= sh - 1
+}
+
+function onProjectScroll(e: Event) {
+  const el = e.target as HTMLElement | null
+  if (!el) return
+  updateScrollShadow(el, projectAtTop, projectAtBottom)
+}
+
+function onSourceScroll(e: Event) {
+  const el = e.target as HTMLElement | null
+  if (!el) return
+  updateScrollShadow(el, sourceAtTop, sourceAtBottom)
+}
+
+function onTargetScroll(e: Event) {
+  const el = e.target as HTMLElement | null
+  if (!el) return
+  updateScrollShadow(el, targetAtTop, targetAtBottom)
+}
+
+function onClickProject(p: { id: number; display: string }, e: MouseEvent) {
+  projects.selectProject({ id: p.id, display: p.display })
+  scrollEventTargetIntoView(e)
+}
+
+function onClickSourceBranch(name: string, e: MouseEvent) {
+  projects.selectedSourceBranch = name
+  scrollEventTargetIntoView(e)
+}
+
+function onClickTargetRow(name: string, e: MouseEvent) {
+  onToggleTarget(name)
+  scrollEventTargetIntoView(e)
+}
+
+function onToggleTarget(name: string) {
+  lastTargetClicked.value = name
+  merge.toggleTarget(name)
+}
 
 watch(
   () => auth.connected,
@@ -119,68 +798,20 @@ watch(
   { immediate: true }
 )
 
-const showFinish = ref(false)
-const finishSummary = ref<MergeRunSummary | null>(null)
-
 const conflictVisible = ref(false)
 const conflictData = ref<any>(null)
 const conflictMrWebUrl = computed(() => conflictData.value?.mrWebUrl || '')
-
-const ipcAvailable = computed(() => {
-  const ipc = (window as any)?.ipcRenderer
-  return Boolean(ipc?.on && ipc?.invoke)
-})
-
-const confirmLogHint = computed(() => {
-  if (!confirmRunning.value) return ''
-  if (merge.logLines.length) return ''
-  if (!ipcAvailable.value) return '无法接收日志：ipcRenderer 不可用，请确认在 Electron 环境运行。'
-  return '暂无日志输出，正在等待后台任务输出...'
-})
-
-function openConflictMr() {
-  const url = conflictMrWebUrl.value
-  if (!url) return
-  openExternal(url)
-}
-
-const finishTitle = computed(() => {
-  const s = finishSummary.value
-  if (!s) return '合并结果'
-  if (s.ok) {
-    if (s.mergedCount === 0 && s.noopCount > 0) return '合并完成（无变更）'
-    return '合并完成'
-  }
-  return '合并失败'
-})
 
 function onClickBatch() {
   if (!projects.selectedProjectId) return
   if (!projects.selectedSourceBranch) return
   if (!merge.selectedTargets.length) return
-  confirmRunning.value = false
-  showConfirm.value = true
+  batchMergeFlowDialogRef.value?.openConfirm()
 }
 
-async function confirmRun() {
-  confirmRunning.value = true
-  await nextTick()
-  finishSummary.value = await merge.run(projects.selectedProjectId, [projects.selectedSourceBranch])
-  confirmRunning.value = false
-  showConfirm.value = false
-  showFinish.value = true
+function onConflictResolved() {
+  void batchMergeFlowDialogRef.value?.confirmRun()
 }
-
-watch(
-  () => merge.logLines.length,
-  async () => {
-    if (!confirmRunning.value) return
-    await nextTick()
-    const el = confirmLogEl.value
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  },
-)
 
 watch(
   () => projects.targetBranches,
@@ -196,878 +827,109 @@ onMounted(() => {
   onMergeConflict((data) => {
     conflictData.value = data
     conflictVisible.value = true
-    showConfirm.value = false
-    confirmRunning.value = false
-    showFinish.value = false
+    batchMergeFlowDialogRef.value?.closeAll()
   })
 })
 </script>
 
-<template>
-  <n-config-provider>
-    <n-message-provider>
-      <n-dialog-provider>
-        <n-notification-provider>
-          <n-loading-bar-provider>
-            <div class="page">
-              <div class="container">
-                <div class="card auth-card">
-                  <div class="row space-between" style="margin-bottom: 0">
-                    <div class="card-title">
-                      GitLab 认证
-                      <div v-if="auth.connected" class="status-badge ok">
-                        <span class="dot" /> 已连接: {{ auth.userName }}
-                      </div>
-                      <div v-else class="status-badge muted">
-                        <span class="dot" /> 未连接
-                      </div>
-                    </div>
-                    <n-button @click="isAuthExpanded = !isAuthExpanded">
-                      {{ isAuthExpanded ? '收起' : '配置' }}
-                    </n-button>
-                  </div>
-
-                  <div v-show="isAuthExpanded" class="auth-body">
-                    <div class="auth-grid">
-                      <div class="input-group">
-                        <div class="label">GitLab URL</div>
-                        <n-input v-model:value="auth.baseUrl" placeholder="http://..." />
-                      </div>
-                      <div class="input-group">
-                        <div class="label">Access Token</div>
-                        <n-input v-model:value="auth.token" placeholder="glpat-..." type="password" />
-                      </div>
-                      <div class="actions">
-                        <n-button :disabled="auth.busy" type="info" @click="auth.connect()">
-                          {{ auth.busy ? '验证中...' : '验证并连接' }}
-                        </n-button>
-                        <n-checkbox v-model:checked="auth.rememberToken">保存</n-checkbox>
-                      </div>
-                    </div>
-                    <div v-if="auth.connected && projects.loading" class="muted small" style="margin-top: 8px">
-                      正在刷新项目列表...
-                    </div>
-                    <div v-if="auth.error" class="status err" style="margin-top: 8px">{{ auth.error }}</div>
-                  </div>
-                </div>
-
-                <div class="content" :class="{ disabled: !canUseContent }">
-                  <div class="columns">
-                    <div class="card col project-col">
-                      <div class="row space-between">
-                        <div class="card-title">1. 选择项目</div>
-                        <n-button :disabled="!canUseContent || projects.loading" @click="projects.loadProjects()">
-                          {{ projects.loading ? '加载中...' : '刷新项目' }}
-                        </n-button>
-                      </div>
-                      <div class="row">
-                        <n-input :value="projects.filter" placeholder="过滤项目…" :disabled="!canUseContent"
-                          @update:value="projects.setFilter" />
-                      </div>
-
-                      <div class="list selector-box">
-                        <n-button v-for="p in projects.filteredItems" :key="p.id" :disabled="!canUseContent"
-                          @click="projects.selectProject({ id: p.id, display: p.display })">
-                          {{ p.display }}
-                        </n-button>
-                        <div v-if="projects.loading" class="muted small">加载中...</div>
-                        <div v-else-if="projects.error" class="err small">{{ projects.error }}</div>
-                        <div v-else-if="!projects.items.length" class="selector-empty">暂无数据</div>
-                      </div>
-
-                      <div class="muted small">已选: {{ projects.selectedProjectName || '(无)' }}</div>
-                    </div>
-
-                    <div class="card col branch-col">
-                      <div class="row space-between">
-                        <div class="card-title">2. 选择源分支</div>
-                        <n-button :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
-                          @click="projects.loadAllBranches()">
-                          {{ projects.sourceBranchesLoading ? '加载中...' : '刷新分支' }}
-                        </n-button>
-                      </div>
-                      <div class="row">
-                        <n-input v-model:value="sourceFilter" placeholder="过滤源分支..."
-                          :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading" />
-                      </div>
-                      <div class="tags branch-list selector-box">
-                        <n-button v-for="b in displaySourceBranches" :key="b" :title="b"
-                          :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
-                          @click="projects.selectedSourceBranch = projects.selectedSourceBranch === b ? '' : b">
-                          <span class="branch-name">{{ b }}</span>
-                        </n-button>
-                        <div v-if="projects.sourceBranchesLoading" class="muted small">加载中...</div>
-                        <div v-else-if="projects.sourceBranchesError" class="err small">{{ projects.sourceBranchesError
-                        }}</div>
-                        <div v-else-if="!projects.selectedProjectId || !displaySourceBranches.length"
-                          class="selector-empty">
-                          暂无数据
-                        </div>
-                      </div>
-                      <div class="muted small">共 {{ displaySourceBranches.length }} 个分支</div>
-                    </div>
-
-                    <div class="card col branch-col">
-                      <div class="row space-between">
-                        <div class="card-title">3. 选择目标分支</div>
-                        <n-button
-                          :disabled="merge.running || !projects.selectedProjectId || !projects.selectedSourceBranch || !merge.selectedTargets.length"
-                          @click="onClickBatch">
-                          {{ merge.running ? '处理中...' : mergeButtonText }}
-                        </n-button>
-                      </div>
-                      <div class="row">
-                        <n-input v-model:value="merge.targetFilter" placeholder="过滤目标分支..." />
-                      </div>
-                      <div class="tags branch-list selector-box">
-                        <template v-for="(row, idx) in displayTargetRows"
-                          :key="row.type === 'separator' ? `sep-${idx}` : row.name">
-                          <div v-if="row.type === 'separator'" class="branch-sep" />
-                          <n-button v-else :disabled="!projects.selectedProjectId" :title="row.name"
-                            @click="merge.toggleTarget(row.name)">
-                            <span v-if="row.isCore" class="core-mark">★</span>
-                            <span class="branch-name">{{ row.name }}</span>
-                          </n-button>
-                        </template>
-                        <div v-if="projects.targetBranchesLoading" class="muted small">加载中...</div>
-                        <div v-else-if="projects.targetBranchesError" class="err small">{{ projects.targetBranchesError
-                        }}</div>
-                        <div v-else-if="
-                          projects.selectedProjectId &&
-                          merge.targets.length &&
-                          !displayTargetRows.length &&
-                          !projects.targetBranchesLoading &&
-                          !projects.targetBranchesError
-                        " class="muted small">
-                          无匹配
-                        </div>
-                        <div v-else-if="!projects.selectedProjectId || !merge.targets.length" class="selector-empty">
-                          暂无数据
-                        </div>
-                      </div>
-                      <div class="muted small">共 {{displayTargetRows.filter((r) => r.type === 'branch').length}} 个分支
-                      </div>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              <div v-if="showConfirm" class="modal">
-                <div class="dialog">
-                  <div class="dialog-title">{{ confirmRunning ? '正在合并...' : '确认合并' }}</div>
-                  <div class="dialog-text">
-                    <div>源分支: 1 个</div>
-                    <div>目标分支: {{ merge.selectedTargets.length }} 个</div>
-                    <div>总计创建 MR: {{ merge.selectedTargets.length }} 个</div>
-                    <div class="small muted">
-                      注意：先创建 MR 并检测是否可合并；若检测到冲突/无法确认，将回滚（删除/关闭）本次创建的 MR。
-                    </div>
-                  </div>
-                  <div v-if="confirmRunning" class="dialog-text log-wrapper">
-                    <div v-if="conflictVisible" class="small muted"
-                      style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
-                      <span>冲突处理中：已弹出冲突解决窗口，请完成处理后继续。</span>
-                      <n-button v-if="conflictMrWebUrl" @click="openConflictMr">打开
-                        MR</n-button>
-                    </div>
-                    <div class="muted small">操作日志</div>
-                    <div ref="confirmLogEl" class="log">
-                      <div v-if="confirmLogHint" class="log-line muted">{{ confirmLogHint }}</div>
-                      <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">
-                        {{ l.text }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="dialog-actions">
-                    <template v-if="!confirmRunning">
-                      <n-button @click="showConfirm = false">取消</n-button>
-                      <n-button @click="confirmRun">确认</n-button>
-                    </template>
-                    <template v-else>
-                      <n-button disabled>合并中...</n-button>
-                    </template>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="showFinish" class="modal">
-                <div class="dialog">
-                  <div class="dialog-title">{{ finishTitle }}</div>
-                  <div class="dialog-text">
-                    <template v-if="finishSummary?.ok">
-                      <template v-if="finishSummary.mergedCount">
-                        <div>成功 MR: {{ finishSummary.mergedCount }} 个</div>
-                      </template>
-                      <template v-else-if="finishSummary.noopCount">
-                        <div>本次无变更，已跳过: {{ finishSummary.noopCount }} 项</div>
-                      </template>
-                      <div v-else>成功 MR: 0 个</div>
-                      <div v-if="finishSummary.mergedCount && finishSummary.noopCount">已跳过无变更: {{
-                        finishSummary.noopCount }} 项</div>
-                    </template>
-                    <template v-else>
-                      <div v-if="finishSummary">冲突/失败: {{ finishSummary.conflictsCount }} 项</div>
-                      <div v-if="finishSummary?.rolledBack">已回滚本次创建的 MR</div>
-                      <div v-if="finishSummary?.message" class="small muted">{{ finishSummary.message }}</div>
-                    </template>
-                  </div>
-                  <div class="dialog-text log-wrapper">
-                    <div class="muted small">操作日志</div>
-                    <div class="log">
-                      <div v-for="(l, idx) in merge.logLines" :key="idx" class="log-line" :class="{ err: l.error }">
-                        {{ l.text }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="dialog-actions">
-                    <n-button @click="showFinish = false">我知道了</n-button>
-                  </div>
-                </div>
-              </div>
-
-              <ConflictDialog :visible="conflictVisible" :conflict-data="conflictData"
-                @close="conflictVisible = false" />
-            </div>
-          </n-loading-bar-provider>
-        </n-notification-provider>
-      </n-dialog-provider>
-    </n-message-provider>
-  </n-config-provider>
-</template>
-
-<style scoped lang="scss">
-// =========================================================================================
-// Variables & Theme
-// =========================================================================================
-$primary-color: #0969da;
-$primary-hover: #0550ae;
-$primary-active: #0a448d;
-
-$success-color: #1a7f37;
-$error-color: #cf222e;
-$warning-bg: rgba(255, 214, 102, 0.2);
-$warning-border: #ffd666;
-$warning-text: #9a6700;
-
-$bg-page: #f6f8fa;
-$bg-card: #ffffff;
-$bg-input: #ffffff;
-$bg-hover: #f3f4f6;
-
-$border-color: #d0d7de;
-$border-radius: 6px;
-$border-radius-lg: 12px;
-
-$text-primary: #1f2328;
-$text-secondary: #656d76;
-$text-placeholder: #8c959f;
-
-$shadow-sm: 0 1px 0 rgba(27, 31, 36, 0.04);
-$shadow-md: 0 3px 6px rgba(140, 149, 159, 0.15);
-$shadow-modal: 0 8px 24px rgba(140, 149, 159, 0.2);
-
-$transition-base: all 0.2s cubic-bezier(0.3, 0, 0.5, 1);
-
-// =========================================================================================
-// Global Layout & Reset
-// =========================================================================================
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-.page {
-  background: $bg-page;
-  color: $text-primary;
-  width: 100%;
-  height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  display: flex;
-  flex-direction: column;
-}
-
-.container {
-  width: 100%;
-  min-width: 0;
-  height: 100%;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  box-sizing: border-box;
-  overflow: hidden;
-  max-width: 1600px; // Limit max width on very large screens for better readability
-  margin: 0 auto;
-}
-
-// =========================================================================================
-// Components: Card
-// =========================================================================================
-.card {
-  background: $bg-card;
-  border: 1px solid $border-color;
-  border-radius: $border-radius;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  box-shadow: $shadow-sm;
-
-  .card-title {
-    font-size: 16px;
-    font-weight: 600;
-    margin-bottom: 16px;
-    color: $text-primary;
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-}
-
-.auth-card {
-  flex: 0 0 auto;
-  transition: all 0.3s ease;
-
-  .auth-body {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid $border-color;
-    animation: slide-down 0.2s ease-out;
-  }
-
-  .auth-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 16px;
-    align-items: end;
-
-    .input-group {
-      min-width: 0; // Allow grid item to shrink below content size if needed
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-
-      .label {
-        font-size: 12px;
-        color: $text-secondary;
-      }
-    }
-
-    .actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      height: 32px; // Match input height roughly
-    }
-  }
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
-  margin-left: 12px;
-
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-  }
-
-  &.ok {
-    background: rgba($success-color, 0.1);
-    color: $success-color;
-  }
-
-  &.muted {
-    background: rgba($text-secondary, 0.1);
-    color: $text-secondary;
-  }
-}
-
-@keyframes slide-down {
-  from {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-// =========================================================================================
-// Components: Layout Rows & Columns
-// =========================================================================================
-.columns {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 20px;
-  align-items: stretch;
-  min-height: 0;
-  justify-content: space-between;
-  flex: 1 1 auto;
-}
-
-.project-col {
-  width: 260px;
-  flex: 0 0 260px;
-}
-
-.branch-col {
-  flex: 1 1 0;
-  min-width: 280px;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  flex: 0 0 auto;
-
-  &.space-between {
-    justify-content: space-between;
-    flex-wrap: nowrap;
-    margin-bottom: 12px;
-
-    .card-title {
-      margin-bottom: 0;
-    }
-  }
-}
-
-// =========================================================================================
-// Components: Form Elements
-// =========================================================================================
-.label {
-  width: 100px;
-  font-size: 14px;
-  color: $text-secondary;
-  font-weight: 500;
-}
-
-.input {
-  flex: 1;
-  width: 100%;
-  border: 1px solid $border-color;
-  border-radius: $border-radius;
-  padding: 8px 12px;
-  outline: none;
-  font-size: 14px;
-  color: $text-primary;
-  background: $bg-input;
-  transition: $transition-base;
-
-  &::placeholder {
-    color: $text-placeholder;
-  }
-
-  &:focus {
-    border-color: $primary-color;
-    box-shadow: 0 0 0 3px rgba($primary-color, 0.15);
-  }
-
-  &:disabled {
-    background: #f6f8fa;
-    color: $text-placeholder;
-    cursor: not-allowed;
-  }
-}
-
-.checkbox {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  color: $text-primary;
-  font-size: 14px;
-  cursor: pointer;
-  user-select: none;
-
-  input[type="checkbox"] {
-    accent-color: $primary-color;
-    width: 16px;
-    height: 16px;
-  }
-}
-
-// =========================================================================================
-// Components: Buttons
-// =========================================================================================
-.btn {
-  border: 1px solid transparent;
-  border-radius: $border-radius;
-  background: $primary-color;
-  color: #ffffff;
-  font-weight: 600;
-  font-size: 14px;
-  padding: 6px 16px;
-  cursor: pointer;
-  transition: $transition-base;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: $shadow-sm;
-  white-space: nowrap;
-
-  &:hover:not(:disabled) {
-    background: $primary-hover;
-    transform: translateY(-1px);
-    box-shadow: $shadow-md;
-  }
-
-  &:active:not(:disabled) {
-    background: $primary-active;
-    transform: translateY(0);
-    box-shadow: none;
-  }
-
-  &:disabled {
-    background: #f0f2f4;
-    color: #8c959f;
-    border-color: rgba(27, 31, 36, 0.15);
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-
-  &.ghost {
-    background: transparent;
-    border: 1px solid $border-color;
-    color: $text-primary;
-    box-shadow: $shadow-sm;
-
-    &:hover:not(:disabled) {
-      background: #f3f4f6;
-      border-color: #8c959f;
-    }
-  }
-}
-
-// =========================================================================================
-// Components: Lists & Selectors
-// =========================================================================================
-.selector-box {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  border: 1px solid $border-color;
-  border-radius: $border-radius;
-  background: #ffffff;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-
-  // Custom Scrollbar
-  &::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: #d0d7de;
-    border-radius: 4px;
-  }
-
-  &::-webkit-scrollbar-thumb:hover {
-    background: #afb8c1;
-  }
-}
-
-.selector-empty {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: $text-placeholder;
-  font-size: 14px;
-  font-style: italic;
-}
-
-// List Items (Project List)
-.list-item {
+<style scoped>
+.gl-list-item {
+  position: relative;
+  justify-content: flex-start;
   width: 100%;
   text-align: left;
-  border: 1px solid transparent;
-  border-radius: $border-radius;
-  padding: 8px 12px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 14px;
-  color: $text-primary;
-  transition: $transition-base;
-  line-height: 1.4;
-
-  &:hover:not(:disabled) {
-    background: $bg-hover;
-  }
-
-  &.active {
-    background: rgba($primary-color, 0.1);
-    color: $primary-color;
-    font-weight: 600;
-    border-color: rgba($primary-color, 0.2);
-  }
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
+  border-radius: var(--gl-list-radius);
+  transition:
+    background-color var(--gl-list-transition) ease,
+    box-shadow var(--gl-list-transition) ease,
+    color var(--gl-list-transition) ease,
+    transform var(--gl-list-transition) ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
-// Tags (Branches)
-.tags {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.gl-list-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 2px;
+  background-color: var(--gl-list-indicator);
+  opacity: 0;
+  transform: scaleY(0.85);
+  transition:
+    opacity var(--gl-list-transition) ease,
+    transform var(--gl-list-transition) ease,
+    background-color var(--gl-list-transition) ease;
 }
 
-.tag {
-  border: 1px solid $border-color;
-  border-radius: 6px; // Slightly less rounded than pills for a cleaner list look
-  padding: 6px 12px;
-  background: #fff;
-  cursor: pointer;
-  transition: $transition-base;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-height: 36px;
-  font-size: 13px;
-  color: $text-primary;
-  position: relative;
-
-  &:hover:not(:disabled) {
-    background: $bg-hover;
-    border-color: #8c959f;
-  }
-
-  &.active {
-    border-color: $primary-color;
-    background: rgba($primary-color, 0.08);
-    color: $primary-color;
-    font-weight: 500;
-
-    // Add a left accent bar for active state
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 4px;
-      background: $primary-color;
-      border-top-left-radius: 5px;
-      border-bottom-left-radius: 5px;
-    }
-  }
-
-  &.core {
-    background: #fff8c5;
-    border-color: rgba(212, 167, 44, 0.4);
-
-    &:hover:not(:disabled) {
-      background: #fbf0b5;
-    }
-  }
-
-  &.core.active {
-    background: rgba($primary-color, 0.1);
-    border-color: $primary-color;
-    color: $primary-color;
-
-    &::before {
-      background: $primary-color;
-    }
-
-    .core-mark {
-      color: #d48806;
-    }
-  }
-
-  .core-mark {
-    color: #d48806;
-    margin-right: 8px;
-    font-size: 14px;
-  }
-
-  .branch-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  }
+.gl-list-item[data-selected='true'] {
+  background-color: var(--gl-list-bg-selected);
+  box-shadow: var(--gl-list-shadow-selected);
+  color: var(--gl-list-text-selected);
+  font-weight: 600;
 }
 
-.branch-sep {
-  height: 1px;
-  background: $border-color;
-  margin: 8px 0;
-  width: 100%;
+.gl-list-item[data-selected='true']::before {
+  opacity: 1;
+  transform: scaleY(1);
 }
 
-// =========================================================================================
-// Components: Modal & Dialog
-// =========================================================================================
-.modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(31, 35, 40, 0.6); // Darker backdrop
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  z-index: 1000;
+.gl-list-item:hover {
+  background-color: var(--gl-list-bg-hover);
+  box-shadow: var(--gl-list-shadow-hover);
 }
 
-.dialog {
-  width: 90%;
-  max-width: 800px;
-  min-width: 320px;
-  background: $bg-card;
-  border-radius: $border-radius-lg;
-  box-shadow: $shadow-modal;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  animation: modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  max-height: 90vh;
+.gl-list-item[data-selected='true']:hover {
+  background-color: var(--gl-list-bg-selected);
+  box-shadow: var(--gl-list-shadow-selected);
+}
+
+.gl-list-item:active {
+  background-color: var(--gl-list-bg-active);
+  transform: translateY(0.5px);
+}
+
+.gl-list-item:disabled {
+  transform: none;
+  box-shadow: none;
+}
+
+.gl-list-item:disabled::before {
+  opacity: 0;
+  transform: scaleY(0.85);
+}
+
+.gl-list-item:focus-visible,
+.gl-list-item.n-button--focus {
+  outline: none;
+  box-shadow: var(--gl-list-focus-ring), var(--gl-list-shadow-hover);
+}
+
+.gl-list-item[data-selected='true']:focus-visible,
+.gl-list-item[data-selected='true'].n-button--focus {
+  outline: none;
+  box-shadow: var(--gl-list-focus-ring), var(--gl-list-shadow-selected);
+}
+
+/* 单行省略：适用于按钮列表中的项目/分支名等一行展示的文本 */
+.gl-ellipsis-1 {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
-
-  .dialog-title {
-    font-size: 18px;
-    font-weight: 600;
-    color: $text-primary;
-    margin: 0;
-    flex: 0 0 auto;
-  }
-
-  .dialog-text {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    font-size: 14px;
-    color: $text-primary;
-    line-height: 1.5;
-    flex: 0 0 auto;
-    min-height: 0;
-
-    &.log-wrapper {
-      flex: 1 1 auto;
-      overflow: hidden;
-    }
-  }
-
-  .dialog-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: 8px;
-    flex: 0 0 auto;
-  }
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-// Logs area
-.log {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  border: 1px solid $border-color;
-  border-radius: $border-radius;
-  padding: 12px;
-  flex: 1;
-  height: auto;
-  min-height: 150px;
-  overflow-y: auto;
-  background: #f6f8fa;
-  color: $text-primary;
-
-  .log-line {
-    word-break: break-all;
-    white-space: pre-wrap;
-
-    &.err {
-      color: $error-color;
-      background: #ffebe9;
-      margin: 0 -12px;
-      padding: 0 12px;
-    }
-  }
-}
-
-// =========================================================================================
-// Utilities & States
-// =========================================================================================
-.content.disabled {
-  opacity: 0.6;
-  pointer-events: none;
-  filter: grayscale(10%);
-}
-
-.content {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.status {
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-
-  &.ok {
-    color: $success-color;
-  }
-
-  &.err {
-    color: $error-color;
-  }
-
-  &.muted {
-    color: $text-secondary;
-  }
-}
-
-.small {
-  font-size: 12px;
-}
-
-.muted {
-  color: $text-secondary;
-}
-
-.err {
-  color: $error-color;
-}
-
-@keyframes modal-pop {
-  from {
-    transform: scale(0.96);
-    opacity: 0;
-  }
-
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
+/* 多行省略：如需要可改用该 class（默认 2 行） */
+.gl-ellipsis-2 {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 </style>

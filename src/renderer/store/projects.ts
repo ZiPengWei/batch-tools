@@ -2,6 +2,10 @@ import { defineStore } from "pinia";
 import { listBranches, listProjects } from "../ipc/bridge";
 import type { ListProjectsItem } from "../ipc/types";
 
+const isE2E =
+  (import.meta as any).env?.VITE_E2E === "1" ||
+  String((import.meta as any).env?.MODE || "").toLowerCase() === "e2e";
+
 export const useProjectsStore = defineStore("projects", {
   state: () => ({
     items: [] as ListProjectsItem[],
@@ -55,6 +59,23 @@ export const useProjectsStore = defineStore("projects", {
       this.loading = true;
       this.error = "";
       try {
+        if (isE2E) {
+          const items = Array.from({ length: 1200 }, (_, i) => {
+            const id = i + 1;
+            return {
+              id,
+              display: `P${id}`,
+              search: `p${id}`,
+              pinyinFull: "",
+              pinyinInitials: "",
+            } satisfies ListProjectsItem;
+          });
+          this.items = items;
+          if (!this.selectedProjectId) {
+            await this.selectProject({ id: items[0].id, display: items[0].display });
+          }
+          return;
+        }
         const res = await listProjects();
         this.items = res.items || [];
       } catch (e) {
@@ -81,6 +102,15 @@ export const useProjectsStore = defineStore("projects", {
       this.sourceBranches = [];
       this.targetBranches = [];
       try {
+        if (isE2E) {
+          const core = ["dev", "test", "gray", "main"];
+          const extra = Array.from({ length: 900 }, (_, i) => `release/${i}`);
+          const list = [...core, ...extra];
+          this.sourceBranches = list.slice();
+          this.targetBranches = list.slice();
+          if (!this.selectedSourceBranch) this.selectedSourceBranch = list[0] || "";
+          return;
+        }
         const res = await listBranches({ projectId: this.selectedProjectId });
         const list = res.branches || [];
         this.sourceBranches = list;

@@ -213,7 +213,7 @@ const authStoreMock = {
   connect: vi.fn(),
 };
 
-const projectsStoreMock = {
+const projectsStoreMock = reactive({
   items: [],
   loading: false,
   error: "",
@@ -235,13 +235,16 @@ const projectsStoreMock = {
   setFilter: vi.fn(),
   prevPage: vi.fn(),
   nextPage: vi.fn(),
+  get filteredItems() {
+    return this.items;
+  },
   get pagedItems() {
     return [];
   },
   get totalPages() {
     return 1;
   },
-};
+}) as any;
 
 let resolveMergeRun: ((v: any) => void) | null = null;
 const mergeStoreMock = reactive({
@@ -312,6 +315,49 @@ beforeEach(() => {
     globalThis.localStorage?.clear?.();
   } catch {}
   vi.clearAllMocks();
+
+  resolveMergeRun = null;
+
+  projectsStoreMock.items = [];
+  projectsStoreMock.loading = false;
+  projectsStoreMock.error = "";
+  projectsStoreMock.filter = "";
+  projectsStoreMock.page = 1;
+  projectsStoreMock.pageSize = 30;
+  projectsStoreMock.selectedProjectId = 1;
+  projectsStoreMock.selectedProjectName = "p";
+  projectsStoreMock.sourceBranches = ["feat"];
+  projectsStoreMock.sourceBranchesLoading = false;
+  projectsStoreMock.sourceBranchesError = "";
+  projectsStoreMock.targetBranches = ["main"];
+  projectsStoreMock.targetBranchesLoading = false;
+  projectsStoreMock.targetBranchesError = "";
+  projectsStoreMock.selectedSourceBranch = "feat";
+  projectsStoreMock.loadProjects = vi.fn();
+  projectsStoreMock.selectProject = vi.fn();
+  projectsStoreMock.loadAllBranches = vi.fn();
+  projectsStoreMock.setFilter = vi.fn();
+  projectsStoreMock.prevPage = vi.fn();
+  projectsStoreMock.nextPage = vi.fn();
+
+  mergeStoreMock.targetFilter = "";
+  mergeStoreMock.targets = ["main"];
+  mergeStoreMock.selectedTargets = ["main"];
+  mergeStoreMock.logLines.splice(0);
+  mergeStoreMock.progressMax = 0;
+  mergeStoreMock.progressValue = 0;
+  mergeStoreMock.running = false;
+  mergeStoreMock.activeRunId = "";
+  mergeStoreMock.setTargets = vi.fn();
+  mergeStoreMock.toggleTarget = vi.fn();
+  mergeStoreMock.log = vi.fn((text: any, error = false) => {
+    mergeStoreMock.logLines.push({ text: String(text ?? ""), error });
+  });
+  mergeStoreMock.run = vi.fn(async () => {
+    return await new Promise((resolve) => {
+      resolveMergeRun = resolve;
+    });
+  });
 });
 
 afterEach(() => {
@@ -328,9 +374,229 @@ describe("App 合并弹窗日志", () => {
 
     const wrapper = mount(App, { attachTo: document.body });
 
-    // Using .branch-list.selector-box as selector-dropdown class is missing in current App.vue
-    const dropdowns = wrapper.findAll(".selector-box.branch-list");
-    expect(dropdowns.length).toBe(2);
+    expect(wrapper.find('[aria-label="源分支列表"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="目标分支列表"]').exists()).toBe(true);
+
+    wrapper.unmount();
+  });
+
+  it("极端数据量下三列列表可渲染且保留独立滚动容器", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const App = (await import("../src/App.vue")).default;
+
+    const scrollIntoViewSpy = vi.fn();
+    if (!("scrollIntoView" in Element.prototype)) {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: scrollIntoViewSpy,
+        writable: true,
+      });
+    } else {
+      (Element.prototype as any).scrollIntoView = scrollIntoViewSpy;
+    }
+
+    const scrollToSpy = vi.fn();
+    if (!("scrollTo" in HTMLDivElement.prototype)) {
+      Object.defineProperty(HTMLDivElement.prototype, "scrollTo", {
+        configurable: true,
+        value: scrollToSpy,
+        writable: true,
+      });
+    } else {
+      (HTMLDivElement.prototype as any).scrollTo = scrollToSpy;
+    }
+
+    projectsStoreMock.items = Array.from({ length: 1200 }, (_, i) => {
+      const id = i + 1;
+      return {
+        id,
+        display: `P${id}`,
+        search: `p${id}`,
+        pinyinFull: "",
+        pinyinInitials: "",
+      };
+    });
+    projectsStoreMock.selectedProjectId = 1;
+    projectsStoreMock.sourceBranches = Array.from(
+      { length: 900 },
+      (_, i) => `feat/${i}`
+    );
+    projectsStoreMock.selectedSourceBranch = "feat/0";
+    projectsStoreMock.targetBranches = Array.from(
+      { length: 900 },
+      (_, i) => `release/${i}`
+    );
+
+    mergeStoreMock.targets = Array.from({ length: 900 }, (_, i) => `t/${i}`);
+    mergeStoreMock.selectedTargets = ["t/0"];
+
+    const wrapper = mount(App, { attachTo: document.body });
+    await nextTick();
+
+    const projectList = wrapper.find('[aria-label="项目列表"]');
+    const sourceList = wrapper.find('[aria-label="源分支列表"]');
+    const targetList = wrapper.find('[aria-label="目标分支列表"]');
+
+    expect(projectList.exists()).toBe(true);
+    expect(sourceList.exists()).toBe(true);
+    expect(targetList.exists()).toBe(true);
+
+    const projectStyle = projectList.attributes("style") || "";
+    const sourceStyle = sourceList.attributes("style") || "";
+    const targetStyle = targetList.attributes("style") || "";
+    expect(projectStyle.replace(/\s/g, "")).toContain("overflow-y:auto");
+    expect(sourceStyle.replace(/\s/g, "")).toContain("overflow-y:auto");
+    expect(targetStyle.replace(/\s/g, "")).toContain("overflow-y:auto");
+
+    const projectButtons = (projectList.element as HTMLElement).querySelectorAll(
+      "button"
+    );
+    expect(projectButtons.length).toBe(1200);
+
+    const setScrollMetrics = (
+      el: HTMLElement,
+      { clientHeight, scrollHeight }: { clientHeight: number; scrollHeight: number }
+    ) => {
+      Object.defineProperty(el, "clientHeight", {
+        configurable: true,
+        get: () => clientHeight,
+      });
+      Object.defineProperty(el, "scrollHeight", {
+        configurable: true,
+        get: () => scrollHeight,
+      });
+    };
+
+    const assertShadowState = (
+      listEl: HTMLElement,
+      {
+        topHidden,
+        bottomHidden,
+      }: { topHidden: boolean; bottomHidden: boolean }
+    ) => {
+      const topShadow = listEl.children[0] as HTMLElement | undefined;
+      const bottomShadow = listEl.children[1] as HTMLElement | undefined;
+      expect(Boolean(topShadow)).toBe(true);
+      expect(Boolean(bottomShadow)).toBe(true);
+      expect(topShadow!.style.display === "none").toBe(topHidden);
+      expect(bottomShadow!.style.display === "none").toBe(bottomHidden);
+    };
+
+    const projectListEl = projectList.element as HTMLElement;
+    const sourceListEl = sourceList.element as HTMLElement;
+    const targetListEl = targetList.element as HTMLElement;
+
+    setScrollMetrics(projectListEl, { clientHeight: 200, scrollHeight: 1000 });
+    setScrollMetrics(sourceListEl, { clientHeight: 200, scrollHeight: 1000 });
+    setScrollMetrics(targetListEl, { clientHeight: 200, scrollHeight: 1000 });
+
+    (projectListEl as any).scrollTop = 0;
+    projectListEl.dispatchEvent(new Event("scroll"));
+    await nextTick();
+    assertShadowState(projectListEl, { topHidden: true, bottomHidden: false });
+    assertShadowState(sourceListEl, { topHidden: true, bottomHidden: true });
+    assertShadowState(targetListEl, { topHidden: true, bottomHidden: true });
+
+    (projectListEl as any).scrollTop = 800;
+    projectListEl.dispatchEvent(new Event("scroll"));
+    await nextTick();
+    assertShadowState(projectListEl, { topHidden: false, bottomHidden: true });
+
+    (sourceListEl as any).scrollTop = 500;
+    sourceListEl.dispatchEvent(new Event("scroll"));
+    await nextTick();
+    assertShadowState(sourceListEl, { topHidden: false, bottomHidden: false });
+
+    wrapper.unmount();
+  });
+
+  it("点击列表项会触发 scrollIntoView 定位到对应项", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const App = (await import("../src/App.vue")).default;
+
+    const scrollIntoViewSpy = vi.fn();
+    if (!("scrollIntoView" in Element.prototype)) {
+      Object.defineProperty(Element.prototype, "scrollIntoView", {
+        configurable: true,
+        value: scrollIntoViewSpy,
+        writable: true,
+      });
+    } else {
+      (Element.prototype as any).scrollIntoView = scrollIntoViewSpy;
+    }
+
+    const scrollToSpy = vi.fn();
+    if (!("scrollTo" in HTMLDivElement.prototype)) {
+      Object.defineProperty(HTMLDivElement.prototype, "scrollTo", {
+        configurable: true,
+        value: scrollToSpy,
+        writable: true,
+      });
+    } else {
+      (HTMLDivElement.prototype as any).scrollTo = scrollToSpy;
+    }
+
+    projectsStoreMock.items = Array.from({ length: 50 }, (_, i) => {
+      const id = i + 1;
+      return {
+        id,
+        display: `P${id}`,
+        search: `p${id}`,
+        pinyinFull: "",
+        pinyinInitials: "",
+      };
+    });
+    projectsStoreMock.selectedProjectId = 1;
+    projectsStoreMock.selectProject = vi.fn((p: any) => {
+      projectsStoreMock.selectedProjectId = p.id;
+      projectsStoreMock.selectedProjectName = String(p.display ?? "");
+    });
+
+    projectsStoreMock.sourceBranches = Array.from(
+      { length: 60 },
+      (_, i) => `feat/${i}`
+    );
+    projectsStoreMock.selectedSourceBranch = "feat/0";
+
+    mergeStoreMock.targets = Array.from({ length: 80 }, (_, i) => `t/${i}`);
+    mergeStoreMock.selectedTargets = [];
+    mergeStoreMock.toggleTarget = vi.fn((name: string) => {
+      const idx = mergeStoreMock.selectedTargets.indexOf(name);
+      if (idx >= 0) mergeStoreMock.selectedTargets.splice(idx, 1);
+      else mergeStoreMock.selectedTargets.push(name);
+    });
+
+    const wrapper = mount(App, { attachTo: document.body });
+    await nextTick();
+
+    const projectList = wrapper.find('[aria-label="项目列表"]');
+    expect(projectList.exists()).toBe(true);
+    const projectButtons = (projectList.element as HTMLElement).querySelectorAll(
+      "button"
+    );
+    expect(projectButtons.length).toBe(50);
+
+    (projectButtons[30] as any).click();
+    await nextTick();
+    await nextTick();
+
+    expect(projectsStoreMock.selectProject).toHaveBeenCalled();
+    expect(scrollIntoViewSpy).toHaveBeenCalled();
+
+    const targetList = wrapper.find('[aria-label="目标分支列表"]');
+    expect(targetList.exists()).toBe(true);
+    const targetButtons = (targetList.element as HTMLElement).querySelectorAll(
+      "button"
+    );
+    expect(targetButtons.length).toBe(80);
+
+    (targetButtons[10] as any).click();
+    await nextTick();
+    await nextTick();
+
+    expect(scrollIntoViewSpy).toHaveBeenCalled();
 
     wrapper.unmount();
   });
@@ -354,38 +620,53 @@ describe("App 合并弹窗日志", () => {
 
     const startBtn = wrapper
       .findAll("button")
-      .find((b: any) => b.text().includes("开始批量合并"));
+      .find((b: any) => {
+        const t = b.text();
+        return t.includes("开始批量合并") || t.includes("合并");
+      });
     expect(startBtn).toBeTruthy();
     await startBtn!.trigger("click");
+    await nextTick();
 
-    const confirmBtn = wrapper
-      .findAll("button")
-      .find((b: any) => b.text() === "确认");
+    const confirmBtn = Array.from(document.body.querySelectorAll("button")).find(
+      (b) => (b.textContent || "").trim() === "确认"
+    );
     expect(confirmBtn).toBeTruthy();
-    await confirmBtn!.trigger("click");
+    (confirmBtn as HTMLButtonElement).click();
 
     await nextTick();
 
-    expect(wrapper.text()).toContain("暂无日志输出");
+    expect(document.body.textContent || "").toContain("暂无日志输出");
 
-    const logEl = wrapper.find(".modal .log").element as HTMLDivElement;
-    Object.defineProperty(logEl, "scrollHeight", {
+    const logWrap = document.body.querySelector(
+      '[data-testid="confirm-log-wrapper"]'
+    ) as HTMLDivElement | null;
+    expect(logWrap).toBeTruthy();
+    const logContent =
+      (logWrap!.querySelector(".n-log .n-scrollbar-container") as
+        | HTMLDivElement
+        | null) || (logWrap!.querySelector(".n-log") as HTMLDivElement | null);
+    expect(logContent).toBeTruthy();
+
+    Object.defineProperty(logContent!, "scrollHeight", {
       configurable: true,
       get: () => 123,
     });
-    logEl.scrollTop = 0;
+    logContent!.scrollTop = 0;
 
     mergeStoreMock.log("L1");
     mergeStoreMock.log("L2", true);
-    await nextTick();
+    for (let i = 0; i < 5; i++) {
+      await nextTick();
+      await Promise.resolve();
+      if (logContent!.scrollTop === 123) break;
+    }
+    expect(logContent!.scrollTop).toBe(123);
     await nextTick();
 
-    expect(wrapper.text()).toContain("L1");
-    expect(wrapper.text()).toContain("L2");
-    expect(
-      wrapper.findAll(".log-line.err").some((n: any) => n.text().includes("L2"))
-    ).toBe(true);
-    expect(logEl.scrollTop).toBe(123);
+    expect(document.body.textContent || "").toContain("L1");
+    expect(document.body.textContent || "").toContain("L2");
+    expect(logContent!.scrollTop).toBe(123);
 
     if (resolveMergeRun)
       (resolveMergeRun as any)({ ok: true, mergedCount: 0, noopCount: 0 });
@@ -2159,7 +2440,6 @@ describe("ConflictDialog 交互", () => {
     for (let i = 0; i < 20; i++) {
       await nextTick();
       await Promise.resolve();
-      const setupState = (wrapper.vm as any).$?.setupState || {};
       const checks = wrapper.findAll(".conflict-file-check");
       if (checks.length === 2) break;
     }

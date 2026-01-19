@@ -226,7 +226,7 @@ export class GitLabClient {
     let page = 1;
     const perPage = 100;
 
-    while (true) {
+    for (;;) {
       const params = {
         min_access_level: minAccessLevel,
         simple: true,
@@ -266,7 +266,7 @@ export class GitLabClient {
     let page = 1;
     const perPage = 100;
 
-    while (true) {
+    for (;;) {
       const params: Record<string, unknown> = { per_page: perPage, page };
       if (search) params.search = search;
 
@@ -447,7 +447,7 @@ export class GitLabClient {
         typeof responseHeaders["content-type"] === "string" &&
         String(responseHeaders["content-type"]).includes("text/html");
 
-      let error: GitLabApiError | undefined = undefined;
+      let error: GitLabApiError | undefined;
       if (!httpOk) {
         error = { status, message: `HTTP ${status}` };
       } else if (isHtml) {

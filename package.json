@@ -9,8 +9,12 @@
     "build": "vue-tsc && vite build && electron-builder",
     "preview": "vite preview",
     "test": "vitest run",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium",
     "typecheck": "vue-tsc --noEmit",
-    "lint": "pnpm run typecheck && pnpm run test"
+    "lint": "eslint . --ext .js,.ts,.vue --report-unused-disable-directives",
+    "lint:fix": "eslint . --ext .js,.ts,.vue --report-unused-disable-directives --fix",
+    "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
     "@types/vscode": "^1.107.0",
@@ -21,19 +25,29 @@
     "vue": "^3.4.21"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^25.0.3",
+    "@typescript-eslint/eslint-plugin": "8.53.0",
+    "@typescript-eslint/parser": "8.53.0",
     "@vitejs/plugin-vue": "^5.0.4",
     "@vue/test-utils": "^2.4.6",
     "electron": "^30.0.1",
     "electron-builder": "^24.13.3",
+    "eslint": "8.57.1",
+    "eslint-config-airbnb-base": "15.0.0",
+    "eslint-import-resolver-typescript": "3.6.1",
+    "eslint-plugin-import": "2.29.1",
+    "eslint-plugin-vue": "9.23.0",
     "jsdom": "^26.0.0",
     "sass": "^1.97.2",
     "typescript": "^5.2.2",
     "vite": "^5.1.6",
+    "vite-plugin-checker": "0.6.4",
     "vite-plugin-electron": "^0.28.6",
     "vite-plugin-electron-renderer": "^0.14.5",
     "vitest": "^1.6.0",
+    "vue-eslint-parser": "9.4.3",
     "vue-tsc": "^2.0.26"
   },
   "main": "dist-electron/main.js",

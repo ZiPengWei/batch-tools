@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { setAuth } from '../ipc/bridge'
 import { useProjectsStore } from './projects'
 
+const isE2E =
+  (import.meta as any).env?.VITE_E2E === '1' ||
+  String((import.meta as any).env?.MODE || '').toLowerCase() === 'e2e'
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     baseUrl: 'http://172.16.43.4:30085',
@@ -17,12 +21,20 @@ export const useAuthStore = defineStore('auth', {
     loadLocal() {
       try {
         const raw = localStorage.getItem('gitlab-auth')
-        if (!raw) return
-        const data = JSON.parse(raw) as any
-        if (typeof data.baseUrl === 'string') this.baseUrl = data.baseUrl
-        if (typeof data.token === 'string') this.token = data.token
-        if (typeof data.rememberToken === 'boolean') this.rememberToken = data.rememberToken
+        if (raw) {
+          const data = JSON.parse(raw) as any
+          if (typeof data.baseUrl === 'string') this.baseUrl = data.baseUrl
+          if (typeof data.token === 'string') this.token = data.token
+          if (typeof data.rememberToken === 'boolean') this.rememberToken = data.rememberToken
+        }
       } catch {}
+      if (isE2E) {
+        this.connected = true
+        this.userName = 'E2E'
+        this.username = 'e2e'
+        const projects = useProjectsStore()
+        projects.loadProjects()
+      }
     },
     saveLocal() {
       if (!this.rememberToken) {
@@ -42,6 +54,14 @@ export const useAuthStore = defineStore('auth', {
       this.error = ''
       if (!this.baseUrl.trim() || !this.token.trim()) {
         this.error = '请输入 URL 和 Token'
+        return
+      }
+      if (isE2E) {
+        this.connected = true
+        this.userName = 'E2E'
+        this.username = 'e2e'
+        const projects = useProjectsStore()
+        projects.loadProjects()
         return
       }
       this.busy = true
