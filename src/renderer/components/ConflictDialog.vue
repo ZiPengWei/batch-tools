@@ -164,7 +164,7 @@
                   :key="f.new_path"
                   class="conflict-file-row"
                   :class="{ active: f.new_path === currentFile?.new_path }"
-                  @click="loading || openFile(f)"
+                  @click="onFileClickWithAutoResolve(f)"
                 >
                   <label
                     class="conflict-file-check"
@@ -175,9 +175,11 @@
                       :value="f.new_path"
                     />
                   </label>
-                  <n-button
+                  <button
+                    class="conflict-file-open"
                     :disabled="loading"
-                    @click.stop="openFile(f)"
+                    type="button"
+                    @click.stop="onFileClickWithAutoResolve(f)"
                   >
                     <span
                       class="conflict-file-path"
@@ -197,7 +199,7 @@
                         {{ choiceLabel(f.new_path) }}
                       </span>
                     </div>
-                  </n-button>
+                  </button>
                   <div class="conflict-file-actions">
                     <n-button
                       :disabled="loading"
@@ -571,6 +573,7 @@
             </n-button>
             <n-button
               :disabled="loading"
+              type="primary"
               @click="confirmResolvedExternally"
             >
               我已在 GitLab
@@ -580,6 +583,7 @@
           <template v-else-if="conflictFiles.length === 0 && pendingActionsCount > 0">
             <n-button
               :disabled="loading"
+              type="error"
               @click="cancelMerge"
             >
               取消合并
@@ -631,12 +635,14 @@
             <div class="footer-action-group">
               <n-button
                 :disabled="loading"
+                type="error"
                 @click="cancelMerge"
               >
                 取消合并
               </n-button>
               <n-button
                 :disabled="loading"
+                type="primary"
                 @click="markResolved"
               >
                 {{ isAllResolved ? '完成合并' : '下一个文件' }}
@@ -1081,6 +1087,138 @@ const conflictCandidateCount = ref(0);
 const autoProcessedFiles = ref<Array<{ new_path: string; conflict_block_count: number }>>([]);
 const showAllFiles = ref(false);
 const deferListRenderUntilScanDone = ref(false);
+
+const autoResolveToken = ref(0);
+const autoResolveTriggeredToken = ref(0);
+const autoResolveExpectedPath = ref('');
+const autoResolveArmedDecorationSeq = ref(0);
+const decorationSeq = ref(0);
+const autoResolvedOnceByPath = ref<Record<string, boolean>>({});
+
+function getAutoResolveKey(filePath: string) {
+  const fp = String(filePath || '').trim();
+  const rid = String(runId.value || '').trim();
+  if (!fp) return '';
+  if (!rid) return fp;
+  return `${rid}::${fp}`;
+}
+
+function hasAutoResolvedOnce(filePath: string) {
+  const key = getAutoResolveKey(filePath);
+  if (!key) return false;
+  return Boolean(autoResolvedOnceByPath.value[key]);
+}
+
+function markAutoResolvedOnce(filePath: string) {
+  const key = getAutoResolveKey(filePath);
+  if (!key) return;
+  autoResolvedOnceByPath.value = { ...autoResolvedOnceByPath.value, [key]: true };
+}
+
+function buildAutoResolveLog(reason: string) {
+  const filePath = String(currentFile.value?.new_path || '').trim();
+  const ts = new Date();
+  return {
+    at: ts.getTime(),
+    iso: ts.toISOString(),
+    filePath,
+    conflictBlockCount: Number(conflictBlockCount.value || 0),
+    reason,
+    token: Number(autoResolveToken.value || 0)
+  };
+}
+
+function logAutoResolve(reason: string) {
+  const payload = buildAutoResolveLog(reason);
+  addHistory(
+    `自动触发 markResolved：path=${payload.filePath || 'unknown'} conflictBlockCount=${payload.conflictBlockCount} reason=${payload.reason} at=${payload.iso}`
+  );
+  console.info('自动触发 markResolved', payload);
+}
+
+function armAutoResolve(expectedPath: string, reason: string) {
+  const fp = String(expectedPath || '').trim();
+  if (!fp) return;
+  if (hasAutoResolvedOnce(fp)) return;
+  autoResolveExpectedPath.value = fp;
+  autoResolveToken.value += 1;
+  autoResolveTriggeredToken.value = 0;
+  autoResolveArmedDecorationSeq.value = decorationSeq.value;
+  const ts = new Date().toISOString();
+  addHistory(`已启用自动检测：path=${autoResolveExpectedPath.value || 'unknown'} reason=${reason} at=${ts}`);
+}
+
+function disarmAutoResolve() {
+  autoResolveToken.value = 0;
+  autoResolveTriggeredToken.value = 0;
+  autoResolveExpectedPath.value = '';
+  autoResolveArmedDecorationSeq.value = decorationSeq.value;
+}
+
+async function maybeAutoResolve(reason: string) {
+  const token = Number(autoResolveToken.value || 0);
+  if (!token) return;
+  if (!props.visible) return;
+  if (loading.value) return;
+  if (decorationSeq.value <= autoResolveArmedDecorationSeq.value) return;
+  if (autoResolveTriggeredToken.value === token) return;
+
+  const expected = String(autoResolveExpectedPath.value || '').trim();
+  const currentPath = String(currentFile.value?.new_path || '').trim();
+  if (!currentPath) return;
+  if (hasAutoResolvedOnce(currentPath)) return;
+  if (expected && expected !== currentPath) return;
+
+  if (conflictBlockCount.value !== 0) {
+    disarmAutoResolve();
+    return;
+  }
+
+  autoResolveTriggeredToken.value = token;
+  try {
+    logAutoResolve(reason);
+    await markResolved();
+    markAutoResolvedOnce(currentPath);
+    disarmAutoResolve();
+  } catch (e) {
+    const msg = `自动 markResolved 异常：${String(e)}`;
+    uiError.value = msg;
+    addHistory(msg);
+    console.error(msg, e);
+  }
+}
+
+watch(
+  () => [
+    autoResolveToken.value,
+    autoResolveExpectedPath.value,
+    decorationSeq.value,
+    conflictBlockCount.value,
+    loading.value,
+    props.visible,
+    String(currentFile.value?.new_path || '').trim()
+  ],
+  () => {
+    void maybeAutoResolve('watch');
+  },
+  { flush: 'sync' }
+);
+
+async function onFileClickWithAutoResolve(file: any) {
+  if (loading.value) return;
+  const fp = String(file?.new_path || '').trim();
+  armAutoResolve(fp, 'file_click');
+  try {
+    await handleFileClick(file);
+  } catch (e) {
+    const msg = `文件点击流程异常：${String(e)}`;
+    uiError.value = msg;
+    addHistory(msg);
+    console.error(msg, e);
+    return;
+  }
+  await maybeAutoResolve('after_handleFileClick');
+}
 
 function getKnownConflictBlockCountForPreserve(f: any): number | null {
   const v = (f as any)?.conflict_block_count;
@@ -1984,6 +2122,7 @@ watch(() => props.conflictData, async (data) => {
     fileStates.value = {};
     selectedPaths.value = [];
     autoProcessedFiles.value = [];
+    autoResolvedOnceByPath.value = {};
     showAllFiles.value = false;
     autoScanTriggeredForRunId = '';
     opHistory.value = [];
@@ -2156,6 +2295,168 @@ function selectNone() {
 function selectUnresolved() {
   const all = conflictFiles.value.map((f: any) => f?.new_path).filter((x: any) => typeof x === 'string' && x.trim());
   selectedPaths.value = all.filter((p: string) => !isResolved(p));
+}
+
+function getConflictBlockCountValue(file: any): number | null {
+  const n = (file as any)?.conflict_block_count;
+  if (typeof n === 'number' && n >= 0) return n;
+  return null;
+}
+
+function findNextPendingFile(afterPath: string) {
+  const files = conflictFiles.value;
+  if (!files.length) return null;
+  const normalizedAfter = String(afterPath || '').trim();
+  const startIdx = Math.max(0, files.findIndex((f: any) => String(f?.new_path || '').trim() === normalizedAfter));
+  const selectedRaw = Array.isArray(selectedPaths.value) ? selectedPaths.value : [];
+  const selected = new Set(selectedRaw.map((p: any) => String(p || '').trim()).filter(Boolean));
+  const hasSelection = selected.size > 0;
+
+  for (let step = 1; step <= files.length; step++) {
+    const idx = (startIdx + step) % files.length;
+    const f = files[idx];
+    const p = String(f?.new_path || '').trim();
+    if (!p || p === normalizedAfter) continue;
+    if (hasSelection && !selected.has(p)) continue;
+    if (isResolved(p)) continue;
+    return f;
+  }
+  return null;
+}
+
+async function fetchThreeWayContentsForFile(file: any) {
+  const newPath = String(file?.new_path || '').trim();
+  const oldPath = String(file?.old_path || '').trim();
+  const targetPath = (oldPath || newPath).trim();
+  const sourcePath = (newPath || oldPath).trim();
+  const basePath = (oldPath || newPath).trim();
+  const filePath = sourcePath || targetPath;
+  if (!filePath) return { ok: false as const, error: '文件路径为空，无法加载。' };
+
+  try {
+    if (localGitEnabled.value) {
+      const res = await localGitGetFileContents({
+        runId: runId.value,
+        filePath,
+        targetPath,
+        sourcePath,
+        basePath,
+      });
+      if (!res?.ok) return { ok: false as const, error: String(res?.error || '本地读取文件失败') };
+      const baseContent = String(res.base ?? '');
+      const left = String(res.left ?? '');
+      const right = String(res.right ?? '');
+      if (
+        (left && left.includes('\u0000')) ||
+        (right && right.includes('\u0000')) ||
+        (baseContent && baseContent.includes('\u0000'))
+      ) {
+        return { ok: false as const, error: `疑似二进制或不可处理内容：${filePath}` };
+      }
+      return { ok: true as const, filePath, base: baseContent, left, right };
+    }
+
+    if (!target.value || !source.value) {
+      return { ok: false as const, error: `分支信息缺失：source=${String(source.value || '')}, target=${String(target.value || '')}` };
+    }
+
+    const getWithFallback = async (ref: string, primary: string, fallback: string) => {
+      try {
+        const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
+        return { ok: true as const, path: primary, content: String(v ?? '') };
+      } catch (e1) {
+        if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
+        try {
+          const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
+          return { ok: true as const, path: fallback, content: String(v2 ?? '') };
+        } catch (e2) {
+          return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
+        }
+      }
+    };
+
+    const [tgtRes, srcRes, baseCommit] = await Promise.all([
+      getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+      getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+      Promise.resolve(getMergeBase({ projectId: projectId.value, refs: [source.value, target.value] })).catch(() => null)
+    ]);
+
+    if (!tgtRes.ok && !srcRes.ok) {
+      return { ok: false as const, error: `无法加载文件内容（目标分支/源分支均读取失败）：${filePath}` };
+    }
+
+    const left = String((tgtRes as any).content ?? '');
+    const right = String((srcRes as any).content ?? '');
+    let baseContent = '';
+    if (baseCommit) {
+      try {
+        baseContent = await getFileContent({ projectId: projectId.value, filePath: basePath || filePath, ref: baseCommit as any });
+      } catch {
+        if (sourcePath && sourcePath !== (basePath || filePath)) {
+          try {
+            baseContent = await getFileContent({ projectId: projectId.value, filePath: sourcePath, ref: baseCommit as any });
+          } catch {
+            baseContent = '';
+          }
+        } else {
+          baseContent = '';
+        }
+      }
+    }
+
+    if (
+      (left && left.includes('\u0000')) ||
+      (right && right.includes('\u0000')) ||
+      (baseContent && baseContent.includes('\u0000'))
+    ) {
+      return { ok: false as const, error: `疑似二进制或不可处理内容：${filePath}` };
+    }
+
+    return { ok: true as const, filePath, base: String(baseContent ?? ''), left, right };
+  } catch (e) {
+    return { ok: false as const, error: `加载三方内容失败：${String(e)}` };
+  }
+}
+
+async function autoSkipZeroConflictFile(file: any) {
+  const fp = String(file?.new_path || '').trim();
+  if (!fp) return { ok: false as const, error: '文件路径为空，无法处理。' };
+  if (isResolved(fp)) return { ok: true as const, skipped: true as const, filePath: fp };
+
+  const three = await fetchThreeWayContentsForFile(file);
+  if (!three.ok) return { ok: false as const, error: three.error };
+  const merged = computeAutoMergeText(three.base, three.left, three.right);
+  stageUpdateAction(fp, merged, 'both');
+  (file as any).conflict_block_state = 'no_conflict';
+  (file as any).conflict_block_count = 0;
+  addHistory(`已自动跳过无冲突文件并暂存：${fp}`);
+  return { ok: true as const, skipped: true as const, filePath: fp };
+}
+
+async function handleFileClick(file: any) {
+  if (loading.value) return;
+  const fp = String(file?.new_path || '').trim();
+  if (!fp) return;
+
+  const count = getConflictBlockCountValue(file);
+  if (count === 0) {
+    try {
+      const res = await autoSkipZeroConflictFile(file);
+      if (!res.ok) throw new Error(res.error);
+      const next = findNextPendingFile(fp);
+      if (!next) return;
+      const idx = conflictFiles.value.findIndex((f: any) => String(f?.new_path || '').trim() === String(next?.new_path || '').trim());
+      if (idx >= 0) currentIndex.value = idx;
+      await loadFileSmart(next);
+      return;
+    } catch (e) {
+      const msg = `自动跳过失败：${String(e)}`;
+      uiError.value = msg;
+      addHistory(msg);
+    }
+  }
+
+  await openFile(file);
 }
 
 async function openFile(file: any) {
@@ -3512,6 +3813,7 @@ function updateLineDecorations() {
     middleDecorationIds = middleEditor.value.deltaDecorations(middleDecorationIds, middleNext);
     rightDecorationIds = rightEditor.value.deltaDecorations(rightDecorationIds, rightNext);
     updateWebstormOverlay();
+    decorationSeq.value += 1;
     return;
   }
 
@@ -3647,6 +3949,7 @@ function updateLineDecorations() {
   middleDecorationIds = middleEditor.value.deltaDecorations(middleDecorationIds, middleNext);
   rightDecorationIds = rightEditor.value.deltaDecorations(rightDecorationIds, rightNext);
   updateWebstormOverlay();
+  decorationSeq.value += 1;
 }
 
 function updateWebstormOverlay() {
@@ -4234,6 +4537,7 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
+  min-height: 56px;
   border-radius: $radius-base;
   border: 1px solid transparent;
   transition: $transition-base;
@@ -4281,7 +4585,7 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     min-width: 0;
     border: none;
     background: transparent;
-    padding: 0;
+    padding: 6px 8px;
     text-align: left;
     cursor: inherit;
     display: flex;
@@ -4289,6 +4593,21 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     gap: 4px;
     outline: none;
     max-width: 100%; // Ensure button doesn't exceed parent
+    min-height: 48px;
+
+    :deep(.n-button__content) {
+      width: 100%;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+    }
+
+    :deep(.n-button__content > *) {
+      min-width: 0;
+      max-width: 100%;
+    }
 
     &:disabled {
       cursor: not-allowed;
@@ -4300,13 +4619,14 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     font-size: 13px;
     color: $text-main;
     font-family: $font-mono;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     line-height: 1.6;
     letter-spacing: 0.2px;
     padding: 2px 0;
     display: block;
+    min-width: 0;
     width: 100%;
   }
 
@@ -4349,8 +4669,9 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   .conflict-file-actions {
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-left: 8px;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
     flex-shrink: 0; // Prevent buttons from shrinking
     opacity: 0.8; // Slightly dim by default
     transition: opacity 0.2s;
@@ -4360,6 +4681,8 @@ $transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
       border: 1px solid $border-color;
       white-space: nowrap;
+      min-width: 64px;
+      height: 32px;
 
       &:hover {
         border-color: $primary;

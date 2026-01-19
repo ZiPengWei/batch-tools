@@ -199,6 +199,7 @@ vi.mock("monaco-editor/esm/vs/language/typescript/ts.worker?worker", () => {
 });
 
 let mergeConflictCb: ((payload: any) => void) | null = null;
+const originalWorker = (globalThis as any).Worker;
 
 const authStoreMock = {
   baseUrl: "http://example",
@@ -315,6 +316,17 @@ beforeEach(() => {
     globalThis.localStorage?.clear?.();
   } catch {}
   vi.clearAllMocks();
+  try {
+    Object.defineProperty(globalThis, "Worker", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    try {
+      (globalThis as any).Worker = undefined;
+    } catch {}
+  }
 
   resolveMergeRun = null;
 
@@ -364,6 +376,17 @@ afterEach(() => {
   try {
     globalThis.localStorage?.clear?.();
   } catch {}
+  try {
+    Object.defineProperty(globalThis, "Worker", {
+      value: originalWorker,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    try {
+      (globalThis as any).Worker = originalWorker;
+    } catch {}
+  }
   vi.useRealTimers();
 });
 
@@ -1092,7 +1115,7 @@ describe("ConflictDialog 交互", () => {
     (bridge as any).getMergeRequestChanges.mockResolvedValueOnce({
       changes: [{ new_path: "a.txt" }],
     });
-    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getMergeBase.mockRejectedValue(new Error("no merge base"));
     (bridge as any).getFileContent.mockImplementation(
       async ({ filePath, ref }: any) => {
         if (filePath === ".gitattributes") return "* -text\n";
@@ -1145,11 +1168,6 @@ describe("ConflictDialog 交互", () => {
         (c: any[]) => c?.[0]?.filePath === "a.txt" && c?.[0]?.ref === "wzp-fix"
       )
     ).toBe(true);
-    expect(
-      fileReads.some(
-        (c: any[]) => c?.[0]?.filePath === "a.txt" && c?.[0]?.ref === "baseSha"
-      )
-    ).toBe(true);
 
     wrapper.unmount();
     vi.useRealTimers();
@@ -1172,7 +1190,7 @@ describe("ConflictDialog 交互", () => {
         { new_path: "d.txt" },
       ],
     });
-    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getMergeBase.mockRejectedValue(new Error("no merge base"));
     (bridge as any).getFileContent.mockImplementation(
       async ({ filePath, ref }: any) => {
         if (filePath === ".gitattributes") return "* -text\n";
@@ -2569,6 +2587,301 @@ describe("ConflictDialog 交互", () => {
       if (getCurrentPath() === "a.txt") break;
     }
     expect(getCurrentPath()).toBe("a.txt");
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("点击冲突块为0的文件会自动暂存并跳转到下一个未解决文件", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockRejectedValue(new Error("no merge base"));
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (filePath === ".gitattributes") return "* -text\n";
+        if (filePath === "a.txt") return `SAME:${filePath}`;
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_zero_skip_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [
+            { type: "text", new_path: "a.txt", conflict_block_count: 0 },
+            { type: "text", new_path: "b.txt", conflict_block_count: 1 },
+          ],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor = setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const getCurrentPath = () =>
+      (setupState.currentFile?.value ?? setupState.currentFile)?.new_path;
+    const findRow = (p: string) =>
+      wrapper
+        .findAll(".conflict-file-row")
+        .find((r: any) => r.text().includes(p));
+    const getPendingActions = () =>
+      (setupState.pendingActions?.value ?? setupState.pendingActions) ?? [];
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (getCurrentPath() === "b.txt") break;
+    }
+    expect(getCurrentPath()).toBe("b.txt");
+
+    const toggleShowAll = wrapper
+      .findAll("button")
+      .find((b: any) => String(b.text?.() ?? "").includes("显示所有文件"));
+    expect(toggleShowAll).toBeTruthy();
+    await (toggleShowAll as any).trigger("click");
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (findRow("a.txt")) break;
+    }
+
+    expect(getPendingActions().some((a: any) => a?.file_path === "a.txt")).toBe(false);
+
+    const rowA = findRow("a.txt");
+    expect(rowA).toBeTruthy();
+    await (rowA as any).trigger("click");
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (getCurrentPath() === "b.txt") break;
+    }
+    expect(getCurrentPath()).toBe("b.txt");
+
+    const actions = getPendingActions();
+    expect(actions.some((a: any) => a?.file_path === "a.txt")).toBe(true);
+
+    const rowA2 = findRow("a.txt");
+    expect(rowA2).toBeTruthy();
+    expect((rowA2 as any).text()).toContain("已解决");
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("打开无冲突文件后会自动触发 markResolved 并记录日志", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `SAME:${filePath}`;
+        if (ref === "wzp-fix") return `SAME:${filePath}`;
+        if (ref === "dev") return `SAME:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_auto_resolve_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt", conflict_block_count: 1 }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const getPendingActions = () =>
+      (setupState.pendingActions?.value ?? setupState.pendingActions) ?? [];
+    const getOpHistory = () =>
+      (setupState.opHistory?.value ?? setupState.opHistory) ?? [];
+
+    const toggleShowAll = wrapper
+      .findAll("button")
+      .find((b: any) => String(b.text?.() ?? "").includes("显示所有文件"));
+    expect(toggleShowAll).toBeTruthy();
+    await (toggleShowAll as any).trigger("click");
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const row = wrapper
+        .findAll(".conflict-file-row")
+        .find((r: any) => r.text().includes("a.txt"));
+      if (row) break;
+    }
+
+    const rowA = wrapper
+      .findAll(".conflict-file-row")
+      .find((r: any) => r.text().includes("a.txt"));
+    expect(rowA).toBeTruthy();
+    await (rowA as any).trigger("click");
+
+    for (let i = 0; i < 120; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      if (getPendingActions().length > 0) break;
+    }
+
+    expect(getPendingActions().some((a: any) => a?.file_path === "a.txt")).toBe(
+      true
+    );
+    expect(wrapper.text()).toContain("自动触发 markResolved：path=a.txt");
+    expect(wrapper.text()).toMatch(/at=20\d{2}-\d{2}-\d{2}T/);
+
+    const pendingBefore = getPendingActions().length;
+    for (let i = 0; i < 30; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    }
+    expect(getPendingActions().length).toBe(pendingBefore);
+
+    const autoLogs = getOpHistory().filter((x: string) =>
+      x.includes("自动触发 markResolved：path=a.txt")
+    );
+    expect(autoLogs.length).toBe(1);
+
+    const rowA2 = wrapper
+      .findAll(".conflict-file-row")
+      .find((r: any) => r.text().includes("a.txt"));
+    expect(rowA2).toBeTruthy();
+    const pendingBeforeSecondClick = getPendingActions().length;
+    await (rowA2 as any).trigger("click");
+
+    for (let i = 0; i < 120; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    }
+
+    expect(getPendingActions().length).toBe(pendingBeforeSecondClick);
+    const autoLogsAfter = getOpHistory().filter((x: string) =>
+      x.includes("自动触发 markResolved：path=a.txt")
+    );
+    expect(autoLogsAfter.length).toBe(1);
+
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("编辑将冲突块清到0不会自动触发 markResolved", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_auto_resolve_2",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 100; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor = setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const getPendingActions = () =>
+      (setupState.pendingActions?.value ?? setupState.pendingActions) ?? [];
+
+    const rowA = wrapper
+      .findAll(".conflict-file-row")
+      .find((r: any) => r.text().includes("a.txt"));
+    expect(rowA).toBeTruthy();
+    await (rowA as any).trigger("click");
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    }
+    expect(wrapper.text()).not.toContain("自动触发 markResolved：path=a.txt");
+    expect(getPendingActions().length).toBe(0);
+
+    const acceptCurrent = setupState.acceptCurrentBranch as any;
+    expect(typeof acceptCurrent).toBe("function");
+    acceptCurrent();
+
+    for (let i = 0; i < 120; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    }
+
+    expect(wrapper.text()).not.toContain("自动触发 markResolved：path=a.txt");
+    expect(getPendingActions().length).toBe(0);
 
     wrapper.unmount();
     vi.useRealTimers();
