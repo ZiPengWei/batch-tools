@@ -2808,6 +2808,159 @@ describe("ConflictDialog 交互", () => {
     vi.useRealTimers();
   });
 
+  it("buildAutoResolveLog 会生成包含标准字段的 payload", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_auto_resolve_log_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const buildAutoResolveLog = setupState.buildAutoResolveLog as any;
+    const currentFileRef = setupState.currentFile;
+    const conflictBlockCountRef = setupState.conflictBlockCount;
+    const autoResolveTokenRef = setupState.autoResolveToken;
+
+    if (currentFileRef && "value" in currentFileRef) {
+      currentFileRef.value = { new_path: "a.txt" };
+    } else {
+      (setupState as any).currentFile = { new_path: "a.txt" };
+    }
+
+    if (conflictBlockCountRef && "value" in conflictBlockCountRef) {
+      conflictBlockCountRef.value = 3;
+    } else {
+      (setupState as any).conflictBlockCount = 3;
+    }
+
+    if (autoResolveTokenRef && "value" in autoResolveTokenRef) {
+      autoResolveTokenRef.value = 7;
+    } else {
+      (setupState as any).autoResolveToken = 7;
+    }
+
+    const payload = buildAutoResolveLog("zero_conflict_file_click");
+
+    expect(payload.filePath).toBe("a.txt");
+    expect(payload.conflictBlockCount).toBe(3);
+    expect(payload.reason).toBe("zero_conflict_file_click");
+    expect(payload.token).toBe(7);
+    expect(typeof payload.at).toBe("number");
+    expect(String(payload.iso)).toMatch(/20\d{2}-\d{2}-\d{2}T/);
+
+    wrapper.unmount();
+  });
+
+  it("logAutoResolve 会把自动行为写入操作记录并包含 reason", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(
+      async ({ filePath, ref }: any) => {
+        if (ref === "baseSha") return `BASE:${filePath}`;
+        if (ref === "wzp-fix") return `SRC:${filePath}`;
+        if (ref === "dev") return `TGT:${filePath}`;
+        return "";
+      }
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_auto_resolve_log_2",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          mrWebUrl: "http://gitlab/mr/1222",
+          conflicts: [{ type: "text", new_path: "a.txt" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 60; i++) {
+      await nextTick();
+      await Promise.resolve();
+    }
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const logAutoResolve = setupState.logAutoResolve as any;
+    const currentFileRef = setupState.currentFile;
+    const conflictBlockCountRef = setupState.conflictBlockCount;
+    const autoResolveTokenRef = setupState.autoResolveToken;
+    const getOpHistory = () =>
+      (setupState.opHistory?.value ?? setupState.opHistory) ?? [];
+
+    if (currentFileRef && "value" in currentFileRef) {
+      currentFileRef.value = { new_path: "a.txt" };
+    } else {
+      (setupState as any).currentFile = { new_path: "a.txt" };
+    }
+
+    if (conflictBlockCountRef && "value" in conflictBlockCountRef) {
+      conflictBlockCountRef.value = 0;
+    } else {
+      (setupState as any).conflictBlockCount = 0;
+    }
+
+    if (autoResolveTokenRef && "value" in autoResolveTokenRef) {
+      autoResolveTokenRef.value = 1;
+    } else {
+      (setupState as any).autoResolveToken = 1;
+    }
+
+    const before = getOpHistory().length;
+    logAutoResolve("zero_conflict_file_click");
+    const after = getOpHistory().length;
+    expect(after).toBe(before + 1);
+
+    const last = String(getOpHistory()[0] ?? "");
+    expect(last).toContain("自动触发 markResolved：path=a.txt");
+    expect(last).toContain("reason=zero_conflict_file_click");
+    expect(last).toMatch(/at=20\d{2}-\d{2}-\d{2}T/);
+
+    wrapper.unmount();
+  });
+
   it("编辑将冲突块清到0不会自动触发 markResolved", async () => {
     vi.useFakeTimers();
     const { mount } = await import("@vue/test-utils");

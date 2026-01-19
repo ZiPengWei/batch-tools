@@ -118,6 +118,12 @@
                 已自动处理无冲突文件: {{ autoProcessedCount }} 个
               </div>
               <div
+                v-if="autoProcessedCount"
+                class="conflict-sidebar-subtitle"
+              >
+                部分文件已自动合并并从列表中隐藏，无需手动介入。
+              </div>
+              <div
                 v-if="conflictListLoading"
                 class="conflict-sidebar-subtitle"
               >
@@ -1115,6 +1121,11 @@ function markAutoResolvedOnce(filePath: string) {
   autoResolvedOnceByPath.value = { ...autoResolvedOnceByPath.value, [key]: true };
 }
 
+const AUTO_RESOLVE_REASON_FILE_CLICK = 'file_click';
+const AUTO_RESOLVE_REASON_AFTER_HANDLE_FILE_CLICK = 'after_handleFileClick';
+const AUTO_RESOLVE_REASON_WATCH = 'watch';
+const AUTO_RESOLVE_REASON_ZERO_CONFLICT = 'zero_conflict_file_click';
+
 function buildAutoResolveLog(reason: string) {
   const filePath = String(currentFile.value?.new_path || '').trim();
   const ts = new Date();
@@ -1199,15 +1210,15 @@ watch(
     String(currentFile.value?.new_path || '').trim()
   ],
   () => {
-    void maybeAutoResolve('watch');
+    void maybeAutoResolve(AUTO_RESOLVE_REASON_WATCH);
   },
-  { flush: 'sync' }
+  { flush: 'post' }
 );
 
 async function onFileClickWithAutoResolve(file: any) {
   if (loading.value) return;
   const fp = String(file?.new_path || '').trim();
-  armAutoResolve(fp, 'file_click');
+  armAutoResolve(fp, AUTO_RESOLVE_REASON_FILE_CLICK);
   try {
     await handleFileClick(file);
   } catch (e) {
@@ -1217,7 +1228,7 @@ async function onFileClickWithAutoResolve(file: any) {
     console.error(msg, e);
     return;
   }
-  await maybeAutoResolve('after_handleFileClick');
+  await maybeAutoResolve(AUTO_RESOLVE_REASON_AFTER_HANDLE_FILE_CLICK);
 }
 
 function getKnownConflictBlockCountForPreserve(f: any): number | null {
@@ -1321,8 +1332,6 @@ const sourceMapsToHead = ref(true);
 
 type FileChoice = 'local' | 'remote' | 'both' | 'manual';
 const fileChoices = ref<Record<string, FileChoice>>({});
-
-let resultModelDisposable: { dispose: () => void } | null = null;
 let suppressResultTracking = false;
 let changeDebounceTimer: any = null;
 let lastRecordedResultValue = '';
@@ -2088,114 +2097,116 @@ async function fetchAllConflicts(reason: string) {
   }
 }
 
+async function applyConflictData(data: any) {
+  projectId.value = data.projectId;
+  source.value = data.source;
+  target.value = data.target;
+  runId.value = data.runId || '';
+  if (!runId.value) {
+    const pid = Number(data.projectId || 0);
+    const iid = Number(data.mrIid || 0);
+    runId.value = `mr-${pid}-${iid}-${Date.now()}`;
+  }
+  mrWebUrl.value = data.mrWebUrl || '';
+  currentIndex.value = 0;
+  currentFile.value = null;
+  fileLoadError.value = '';
+  localGitEnabled.value = false;
+  localGitError.value = '';
+  relatedFiles.value = [];
+  relatedFilesError.value = '';
+  conflictApiDebug.value = data.conflictApiDebug || null;
+  mrDetails.value = data.mrDetails || null;
+  emptyRefreshError.value = '';
+  emptyMrRefreshError.value = '';
+  emptyAutoRefreshed = false;
+  localGitAutoTriggered = false;
+  relatedAdhocAutoOpened = false;
+  gitattributesLoading.value = false;
+  gitattributesError.value = '';
+  gitattributesTarget.value = '';
+  gitattributesSource.value = '';
+  pendingActions.value = [];
+  fileStates.value = {};
+  selectedPaths.value = [];
+  autoProcessedFiles.value = [];
+  autoResolvedOnceByPath.value = {};
+  showAllFiles.value = false;
+  autoScanTriggeredForRunId = '';
+  opHistory.value = [];
+  finalConfirmVisible.value = false;
+  diffVisible.value = false;
+  lastRecordedResultValue = '';
+
+  let list = Array.isArray(data.conflicts) ? data.conflicts : [];
+  void analyzeAndApplyConflictFiles(list, '初始化冲突列表');
+
+  queueMicrotask(() => {
+    if (!props.visible) return;
+    if (!conflictFiles.value.length) return;
+    if (!currentFile.value) pendingOpenFile = conflictFiles.value[0];
+    void maybeOpenPendingFile();
+  });
+
+  if (data.mrIid) {
+    void fetchAllConflicts('拉取冲突文件列表完成');
+  }
+
+  if (data.mrIid && pendingActions.value.length === 0) {
+    await Promise.all([
+      loadRelatedFiles(Number(data.mrIid)),
+      loadGitattributes()
+    ]);
+    const d = mrDetails.value as any;
+    const looksConflicted =
+      d?.has_conflicts ||
+      d?.detailed_merge_status === 'conflicts' ||
+      d?.merge_status === 'cannot_be_merged';
+    if (!emptyAutoRefreshed && looksConflicted) {
+      emptyAutoRefreshed = true;
+      await refreshConflictList();
+    }
+
+    if (
+      looksConflicted &&
+      !relatedAdhocAutoOpened &&
+      !conflictFiles.value.length &&
+      pendingActions.value.length === 0 &&
+      relatedFiles.value.length
+    ) {
+      relatedAdhocAutoOpened = true;
+      const candidates = relatedFiles.value.filter((p: string) => !isBinaryCandidate(p));
+      const list2 = candidates.length ? candidates : relatedFiles.value.slice();
+      const first = String(list2[0] || '').trim();
+      if (first) {
+        addHistory(`冲突列表为空，使用 MR 变更文件进入三方合并：${list2.length} 个`);
+        console.log(`冲突列表为空，使用 MR 变更文件进入三方合并：${list2.length} 个`);
+        await openAdhocMerge(first, list2);
+      }
+    }
+
+    const wantAutoLocalGit = Boolean((data as any)?.autoLocalGitDetect);
+    if (
+      wantAutoLocalGit &&
+      looksConflicted &&
+      !localGitAutoTriggered &&
+      !conflictFiles.value.length &&
+      pendingActions.value.length === 0
+    ) {
+      localGitAutoTriggered = true;
+      setTimeout(() => {
+        if (!props.visible) return;
+        if (localGitLoading.value) return;
+        if (conflictFiles.value.length) return;
+        void prepareLocalGitConflicts();
+      }, 0);
+    }
+  }
+}
+
 watch(() => props.conflictData, async (data) => {
   if (data) {
-    projectId.value = data.projectId;
-    source.value = data.source;
-    target.value = data.target;
-    runId.value = data.runId || '';
-    if (!runId.value) {
-      const pid = Number(data.projectId || 0);
-      const iid = Number(data.mrIid || 0);
-      runId.value = `mr-${pid}-${iid}-${Date.now()}`;
-    }
-    mrWebUrl.value = data.mrWebUrl || '';
-    currentIndex.value = 0;
-    currentFile.value = null;
-    fileLoadError.value = '';
-    localGitEnabled.value = false;
-    localGitError.value = '';
-    relatedFiles.value = [];
-    relatedFilesError.value = '';
-    conflictApiDebug.value = data.conflictApiDebug || null;
-    mrDetails.value = data.mrDetails || null;
-    emptyRefreshError.value = '';
-    emptyMrRefreshError.value = '';
-    emptyAutoRefreshed = false;
-    localGitAutoTriggered = false;
-    relatedAdhocAutoOpened = false;
-    gitattributesLoading.value = false;
-    gitattributesError.value = '';
-    gitattributesTarget.value = '';
-    gitattributesSource.value = '';
-    pendingActions.value = [];
-    fileStates.value = {};
-    selectedPaths.value = [];
-    autoProcessedFiles.value = [];
-    autoResolvedOnceByPath.value = {};
-    showAllFiles.value = false;
-    autoScanTriggeredForRunId = '';
-    opHistory.value = [];
-    finalConfirmVisible.value = false;
-    diffVisible.value = false;
-    resultModelDisposable?.dispose();
-    resultModelDisposable = null;
-    lastRecordedResultValue = '';
-
-    let list = Array.isArray(data.conflicts) ? data.conflicts : [];
-    void analyzeAndApplyConflictFiles(list, '初始化冲突列表');
-
-    queueMicrotask(() => {
-      if (!props.visible) return;
-      if (!conflictFiles.value.length) return;
-      if (!currentFile.value) pendingOpenFile = conflictFiles.value[0];
-      void maybeOpenPendingFile();
-    });
-
-    if (data.mrIid) {
-      void fetchAllConflicts('拉取冲突文件列表完成');
-    }
-
-    if (data.mrIid && pendingActions.value.length === 0) {
-      await Promise.all([
-        loadRelatedFiles(Number(data.mrIid)),
-        loadGitattributes()
-      ]);
-      const d = mrDetails.value as any;
-      const looksConflicted =
-        d?.has_conflicts ||
-        d?.detailed_merge_status === 'conflicts' ||
-        d?.merge_status === 'cannot_be_merged';
-      if (!emptyAutoRefreshed && looksConflicted) {
-        emptyAutoRefreshed = true;
-        await refreshConflictList();
-      }
-
-      if (
-        looksConflicted &&
-        !relatedAdhocAutoOpened &&
-        !conflictFiles.value.length &&
-        pendingActions.value.length === 0 &&
-        relatedFiles.value.length
-      ) {
-        relatedAdhocAutoOpened = true;
-        const candidates = relatedFiles.value.filter((p: string) => !isBinaryCandidate(p));
-        const list = candidates.length ? candidates : relatedFiles.value.slice();
-        const first = String(list[0] || '').trim();
-        if (first) {
-          addHistory(`冲突列表为空，使用 MR 变更文件进入三方合并：${list.length} 个`);
-          console.log(`冲突列表为空，使用 MR 变更文件进入三方合并：${list.length} 个`);
-          await openAdhocMerge(first, list);
-        }
-      }
-
-      const wantAutoLocalGit = Boolean((data as any)?.autoLocalGitDetect);
-      if (
-        wantAutoLocalGit &&
-        looksConflicted &&
-        !localGitAutoTriggered &&
-        !conflictFiles.value.length &&
-        pendingActions.value.length === 0
-      ) {
-        localGitAutoTriggered = true;
-        setTimeout(() => {
-          if (!props.visible) return;
-          if (localGitLoading.value) return;
-          if (conflictFiles.value.length) return;
-          void prepareLocalGitConflicts();
-        }, 0);
-      }
-    }
+    await applyConflictData(data);
   }
 }, { immediate: true });
 
@@ -2324,6 +2335,21 @@ function findNextPendingFile(afterPath: string) {
   return null;
 }
 
+async function getFileContentWithFallback(ref: string, primary: string, fallback: string) {
+  try {
+    const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
+    return { ok: true as const, path: primary, content: String(v ?? '') };
+  } catch (e1) {
+    if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
+    try {
+      const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
+      return { ok: true as const, path: fallback, content: String(v2 ?? '') };
+    } catch (e2) {
+      return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
+    }
+  }
+}
+
 async function fetchThreeWayContentsForFile(file: any) {
   const newPath = String(file?.new_path || '').trim();
   const oldPath = String(file?.old_path || '').trim();
@@ -2360,24 +2386,9 @@ async function fetchThreeWayContentsForFile(file: any) {
       return { ok: false as const, error: `分支信息缺失：source=${String(source.value || '')}, target=${String(target.value || '')}` };
     }
 
-    const getWithFallback = async (ref: string, primary: string, fallback: string) => {
-      try {
-        const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
-        return { ok: true as const, path: primary, content: String(v ?? '') };
-      } catch (e1) {
-        if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
-        try {
-          const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
-          return { ok: true as const, path: fallback, content: String(v2 ?? '') };
-        } catch (e2) {
-          return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
-        }
-      }
-    };
-
     const [tgtRes, srcRes, baseCommit] = await Promise.all([
-      getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
-      getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+      getFileContentWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+      getFileContentWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
       Promise.resolve(getMergeBase({ projectId: projectId.value, refs: [source.value, target.value] })).catch(() => null)
     ]);
 
@@ -2441,8 +2452,16 @@ async function handleFileClick(file: any) {
   const count = getConflictBlockCountValue(file);
   if (count === 0) {
     try {
+      currentFile.value = file;
       const res = await autoSkipZeroConflictFile(file);
       if (!res.ok) throw new Error(res.error);
+      const token = Number(autoResolveToken.value || 0);
+      const expected = String(autoResolveExpectedPath.value || '').trim();
+      if (token && expected && expected === fp && !hasAutoResolvedOnce(fp)) {
+        logAutoResolve(AUTO_RESOLVE_REASON_ZERO_CONFLICT);
+        markAutoResolvedOnce(fp);
+        disarmAutoResolve();
+      }
       const next = findNextPendingFile(fp);
       if (!next) return;
       const idx = conflictFiles.value.findIndex((f: any) => String(f?.new_path || '').trim() === String(next?.new_path || '').trim());
@@ -2501,24 +2520,9 @@ async function openDiff(file: any) {
       if (!target.value || !source.value) {
         throw new Error(`分支信息缺失：source=${String(source.value || '')}, target=${String(target.value || '')}`);
       }
-      const getWithFallback = async (ref: string, primary: string, fallback: string) => {
-        try {
-          const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
-          return { ok: true as const, path: primary, content: String(v ?? '') };
-        } catch (e1) {
-          if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
-          try {
-            const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
-            return { ok: true as const, path: fallback, content: String(v2 ?? '') };
-          } catch (e2) {
-            return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
-          }
-        }
-      };
-
       const [tgtRes, srcRes] = await Promise.all([
-        getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
-        getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+        getFileContentWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+        getFileContentWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
       ]);
 
       if (!tgtRes.ok && !srcRes.ok) {
@@ -3036,24 +3040,9 @@ async function loadFile(file: any) {
       if (!target.value || !source.value) {
         throw new Error(`分支信息缺失：source=${String(source.value || '')}, target=${String(target.value || '')}`);
       }
-      const getWithFallback = async (ref: string, primary: string, fallback: string) => {
-        try {
-          const v = await getFileContent({ projectId: projectId.value, filePath: primary, ref });
-          return { ok: true as const, path: primary, content: String(v ?? '') };
-        } catch (e1) {
-          if (!fallback || fallback === primary) return { ok: false as const, path: primary, content: '', error: String(e1) };
-          try {
-            const v2 = await getFileContent({ projectId: projectId.value, filePath: fallback, ref });
-            return { ok: true as const, path: fallback, content: String(v2 ?? '') };
-          } catch (e2) {
-            return { ok: false as const, path: `${primary} -> ${fallback}`, content: '', error: String(e2) };
-          }
-        }
-      };
-
       const [tgtRes, srcRes, base] = await Promise.all([
-        getWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
-        getWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
+        getFileContentWithFallback(target.value, targetPath || filePath, sourcePath || filePath),
+        getFileContentWithFallback(source.value, sourcePath || filePath, targetPath || filePath),
         Promise.resolve(getMergeBase({ projectId: projectId.value, refs: [source.value, target.value] })).catch(() => null)
       ]);
       if (!tgtRes.ok && !srcRes.ok) {
@@ -4323,7 +4312,6 @@ onUnmounted(() => {
     if (localGitEnabled.value) localGitCleanup({ runId: runId.value });
   } catch { }
   resetConflictWorker();
-  resultModelDisposable?.dispose();
   window.removeEventListener('keydown', onKeydown, true);
   window.removeEventListener('resize', onResize, true);
 });
