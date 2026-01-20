@@ -138,6 +138,7 @@ export async function runAtomicBatchMergeByMerge(
     if (!iid) continue;
     const check = await waitUntilMergeable(client, projectId, iid, {
       onProgress: (m) => log?.(m),
+      strictConflictCheck: true,
     });
     if (check.ok) {
       log?.(`可合并: ${c.source} -> ${c.target} (MR !${iid})`);
@@ -264,6 +265,8 @@ export async function runAtomicBatchMergeByMerge(
       }
     }
 
+    let finalCheck = check;
+
     if (opts?.conflictHandler) {
       log?.(
         `检测到冲突: ${c.source} -> ${c.target} (MR !${iid})，等待用户解决...`
@@ -283,12 +286,14 @@ export async function runAtomicBatchMergeByMerge(
           log?.(`用户标记冲突已解决，重新检测可合并状态...`);
           const recheck = await waitUntilMergeable(client, projectId, iid, {
             onProgress: (m) => log?.(m),
+            strictConflictCheck: false,
           });
           if (recheck.ok) {
             log?.(`冲突已解决且 MR 可合并: ${c.source} -> ${c.target}`);
             continue;
           } else {
             log?.(`重新检测失败: ${recheck.reason}`, true);
+            finalCheck = recheck;
           }
         } else {
           log?.(`用户取消或未解决冲突`);
@@ -302,9 +307,9 @@ export async function runAtomicBatchMergeByMerge(
       type: "conflict",
       source: c.source,
       target: c.target,
-      reason: check.reason,
+      reason: finalCheck.reason,
       mrIid: iid,
-      mrWebUrl: (check.details as any)?.web_url,
+      mrWebUrl: (finalCheck.details as any)?.web_url,
       conflicts: conflictList,
     });
     log?.(

@@ -21,6 +21,7 @@ export async function waitUntilMergeable(
     maxRetries?: number;
     pollIntervalMs?: number;
     onProgress?: (msg: string) => void;
+    strictConflictCheck?: boolean;
   }
 ): Promise<
   | { ok: true; details: GitLabMergeRequest }
@@ -28,6 +29,7 @@ export async function waitUntilMergeable(
 > {
   const maxRetries = opts?.maxRetries ?? 18;
   const pollIntervalMs = opts?.pollIntervalMs ?? 1500;
+  const strictConflictCheck = opts?.strictConflictCheck ?? true;
 
   let lastDetails: GitLabMergeRequest | undefined;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -53,19 +55,6 @@ export async function waitUntilMergeable(
 
     const changesCount = details.changes_count;
     if (
-      detailed === "not_needed" ||
-      detailed === "nothing_to_merge" ||
-      changesCount === "0" ||
-      changesCount === 0
-    ) {
-      const changesData = await client.getMergeRequestChanges(projectId, mrIid);
-      const changes = changesData?.changes ?? [];
-      if (!changes.length) return { ok: false, details, reason: "__noop_no_changes__" };
-    }
-
-    if (status === "can_be_merged" && !hasConflicts) return { ok: true, details };
-
-    if (
       status === "cannot_be_merged" ||
       hasConflicts ||
       detailed === "cannot_be_merged" ||
@@ -73,9 +62,26 @@ export async function waitUntilMergeable(
     ) {
       const changesData = await client.getMergeRequestChanges(projectId, mrIid);
       const changes = changesData?.changes ?? [];
-      if (!changes.length) return { ok: false, details, reason: "__noop_no_changes__" };
-      return { ok: false, details, reason: "检测到冲突（不可合并）" };
+      if (!changes.length)
+        return { ok: false, details, reason: "__noop_no_changes__" };
+      if (strictConflictCheck || attempt === maxRetries - 1)
+        return { ok: false, details, reason: "检测到冲突（不可合并）" };
+      continue;
     }
+
+    if (
+      detailed === "not_needed" ||
+      detailed === "nothing_to_merge" ||
+      changesCount === "0" ||
+      changesCount === 0
+    ) {
+      const changesData = await client.getMergeRequestChanges(projectId, mrIid);
+      const changes = changesData?.changes ?? [];
+      if (!changes.length)
+        return { ok: false, details, reason: "__noop_no_changes__" };
+    }
+
+    if (status === "can_be_merged" && !hasConflicts) return { ok: true, details };
   }
   return {
     ok: false,
@@ -139,4 +145,3 @@ export async function rollback(
   log?.("回滚完成。", true);
   return { ok: false, rolledBack: true, conflicts, noop };
 }
-

@@ -175,6 +175,92 @@ describe("MergeStrategy - Existing MR", () => {
     );
   });
 
+  it("当 v4 冲突接口 404 且 conflicts.json 返回 HTML 时仍应进入冲突处理", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock() as any;
+
+    client.createMergeRequest.mockResolvedValueOnce({
+      iid: 1318,
+      web_url:
+        "http://172.16.43.4:30085/ofs-kernel/contract/ProjectOperation-Frontend/-/merge_requests/1318",
+    });
+
+    client.getMergeRequestConflicts.mockImplementationOnce(
+      async (_projectId: number, _mrIid: number, diagnostic?: any) => {
+        diagnostic?.({
+          ok: false,
+          method: "GET",
+          url: "http://172.16.43.4:30085/api/v4/projects/454/merge_requests/1318/conflicts",
+          status: 404,
+          bodyType: "object",
+          bodyKeys: ["error"],
+        });
+        return [];
+      }
+    );
+
+    client.getMergeRequestConflictsJsonByMrWebUrl.mockImplementationOnce(
+      async (_mrWebUrl: string, _mrIid: number, diagnostic?: any) => {
+        diagnostic?.({
+          ok: false,
+          method: "GET",
+          url: "http://172.16.43.4:30085/ofs-kernel/contract/ProjectOperation-Frontend/-/merge_requests/1318/conflicts.json",
+          status: 200,
+          bodyType: "string",
+        });
+        return [];
+      }
+    );
+
+    client.getMergeRequestChanges.mockResolvedValueOnce({
+      changes: [{ new_path: "a.bin" }],
+    });
+
+    client.getMergeRequest.mockResolvedValueOnce({
+      iid: 1318,
+      web_url:
+        "http://172.16.43.4:30085/ofs-kernel/contract/ProjectOperation-Frontend/-/merge_requests/1318",
+      merge_status: "cannot_be_merged",
+      detailed_merge_status: null,
+      has_conflicts: true,
+      state: "opened",
+      changes_count: "1",
+    });
+
+    const service = new MergeService(client);
+    const conflictHandler = vi.fn().mockResolvedValue({ resolved: false });
+
+    const p = service.runAtomicBatchMerge(
+      454,
+      [{ source: "wzp-冲突测试", target: "dev" }],
+      { conflictHandler }
+    );
+
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(res.ok).toBe(false);
+    expect(conflictHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mrIid: 1318,
+        conflicts: [],
+        conflictApiDebug: expect.objectContaining({
+          status: 404,
+          ok: false,
+          conflictsJson: expect.objectContaining({
+            status: 200,
+            bodyType: "string",
+          }),
+        }),
+        mrDetails: expect.objectContaining({
+          has_conflicts: true,
+          merge_status: "cannot_be_merged",
+        }),
+      })
+    );
+  });
+
   it("createMergeRequest 失败时复用已存在的 MR 并继续流程", async () => {
     vi.useFakeTimers();
     const client = createClientMock();
