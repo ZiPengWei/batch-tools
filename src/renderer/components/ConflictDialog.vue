@@ -3257,6 +3257,15 @@ async function confirmAndResolveConflicts() {
         if (data != null) extra = `\n\n响应数据:\n${JSON.stringify(data, null, 2)}`;
       } catch { }
       alert(`GitLab 提交失败: ${status ? `HTTP ${status}` : errMsg}${extra}`);
+      // GitLab API 返回失败，标记合并为失败状态
+      try {
+        await resolveConflict({
+          runId: runId.value,
+          resolution: { resolved: false }
+        });
+      } catch (resolveErr) {
+        console.error('标记合并失败时出错：', resolveErr);
+      }
       return;
     }
     try {
@@ -3271,6 +3280,15 @@ async function confirmAndResolveConflicts() {
   } catch (e) {
     const msg = e instanceof Error ? (e.stack || e.message) : String(e);
     alert('GitLab 提交失败: ' + msg);
+    // 提交失败时，标记合并为失败状态
+    try {
+      await resolveConflict({
+        runId: runId.value,
+        resolution: { resolved: false }
+      });
+    } catch (resolveErr) {
+      console.error('标记合并失败时出错：', resolveErr);
+    }
   } finally {
     resolveConflictsLoading.value = false;
     finalConfirmVisible.value = false;
@@ -4267,22 +4285,32 @@ function unstageCurrentFile() {
 
 async function confirmAndCommit() {
   if (!canFinish.value) return;
+  let commitSuccess = false;
   try {
     loading.value = true;
     const actions = normalizeCommitActions(pendingActions.value);
     ensureCloneableForIpc(actions, '提交 actions');
+
+    // 提交冲突解决到源分支
+    addHistory(`正在提交 ${actions.length} 个文件的冲突解决到分支 ${source.value}...`);
     await createCommit({
       projectId: projectId.value,
       branch: source.value,
-      message: `Merge conflict resolution for ${source.value} -> ${target.value} (MR !${props.conflictData?.mrIid || ''})`,
+      message: String(commitMessage.value || '').trim() || `Merge conflict resolution for ${source.value} -> ${target.value} (MR !${props.conflictData?.mrIid || ''})`,
       actions
     });
+    commitSuccess = true;
+    addHistory(`✓ 提交成功，已推送到 ${source.value} 分支`);
+    addHistory(`提示：GitLab 正在重新计算 MR 状态，这可能需要 1-2 分钟...`);
+
     try {
       if (localGitEnabled.value) await localGitCleanup({ runId: runId.value });
     } catch { }
+
+    // 标记冲突已解决，让主进程等待 GitLab 更新 MR 状态
     await resolveConflict({
       runId: runId.value,
-      resolution: { resolved: true }
+      resolution: { resolved: true, commitPushed: true }
     });
     emit('resolved');
     emit('close');
@@ -4290,6 +4318,17 @@ async function confirmAndCommit() {
     console.error('提交失败，错误堆栈：', e);
     const msg = e instanceof Error ? (e.stack || e.message) : String(e);
     alert('提交失败: ' + msg);
+    // 提交失败时，标记合并为失败状态
+    if (!commitSuccess) {
+      try {
+        await resolveConflict({
+          runId: runId.value,
+          resolution: { resolved: false }
+        });
+      } catch (resolveErr) {
+        console.error('标记合并失败时出错：', resolveErr);
+      }
+    }
   } finally {
     loading.value = false;
     finalConfirmVisible.value = false;

@@ -32,6 +32,8 @@ export async function waitUntilMergeable(
   const strictConflictCheck = opts?.strictConflictCheck ?? true;
 
   let lastDetails: GitLabMergeRequest | undefined;
+  let lastConflictAttempt = -1;
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     await sleep(pollIntervalMs);
     const details = await client.getMergeRequest(projectId, mrIid);
@@ -60,10 +62,21 @@ export async function waitUntilMergeable(
       detailed === "cannot_be_merged" ||
       detailed === "conflicts"
     ) {
+      lastConflictAttempt = attempt;
       const changesData = await client.getMergeRequestChanges(projectId, mrIid);
       const changes = changesData?.changes ?? [];
       if (!changes.length)
         return { ok: false, details, reason: "__noop_no_changes__" };
+      // 如果是非严格模式，给更多时间让 GitLab 更新状态
+      if (!strictConflictCheck && attempt < maxRetries - 1) {
+        // 如果连续多次都是冲突状态，可能真的有问题
+        if (lastConflictAttempt >= 0 && attempt - lastConflictAttempt > 10) {
+          opts?.onProgress?.(
+            `  [MR !${mrIid}] 警告：连续多次检测到冲突状态，可能确实存在未解决的冲突`
+          );
+        }
+        continue;
+      }
       if (strictConflictCheck || attempt === maxRetries - 1)
         return { ok: false, details, reason: "检测到冲突（不可合并）" };
       continue;
@@ -86,7 +99,7 @@ export async function waitUntilMergeable(
   return {
     ok: false,
     details: lastDetails,
-    reason: "超时：无法确认是否可合并",
+    reason: "超时：无法确认是否可合并（GitLab 可能需要更多时间处理提交）",
   };
 }
 

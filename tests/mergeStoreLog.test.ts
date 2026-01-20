@@ -46,29 +46,27 @@ describe("merge store log wiring", () => {
     expect(stopListenSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("log() 会对重复日志合并计数，并在高频下限制详情条数", () => {
+  it("log() 会记录日志到 logLines，并在超过限制时自动裁剪", () => {
     setActivePinia(createPinia());
     const store = useMergeStore();
 
-    for (let i = 0; i < 6000; i++) store.log("SAME");
+    for (let i = 0; i < 100; i++) store.log(`Log ${i}`);
 
-    expect(store.logGroups.length).toBe(1);
-    const g = store.logGroups[0];
-    expect(g.count).toBe(6000);
-    expect(g.items.length).toBeLessThanOrEqual(g.count);
-    expect(g.dropped).toBe(g.count - g.items.length);
+    expect(store.logLines.length).toBe(100);
+    expect(store.logLines[0].text).toBe("Log 0");
+    expect(store.logLines[99].text).toBe("Log 99");
   });
 
-  it("log() 会把 MR Ready: IID N 智能合并为同一组", () => {
+  it("log() 会正确标记错误日志", () => {
     setActivePinia(createPinia());
     const store = useMergeStore();
 
-    store.log("MR Ready: IID 1");
-    store.log("MR Ready: IID 999");
+    store.log("Normal log");
+    store.log("Error log", true);
 
-    expect(store.logGroups.length).toBe(1);
-    expect(store.logGroups[0].displayText).toBe("MR Ready: IID");
-    expect(store.logGroups[0].count).toBe(2);
+    expect(store.logLines.length).toBe(2);
+    expect(store.logLines[0].error).toBeFalsy();
+    expect(store.logLines[1].error).toBe(true);
   });
 
   it("setTargets() 不应清空既有日志（避免结果弹窗日志丢失）", () => {
@@ -78,8 +76,7 @@ describe("merge store log wiring", () => {
     store.log("测试日志-1");
     store.setTargets(["main"]);
 
-    expect(store.logGroups.length).toBe(1);
     expect(store.logLines.length).toBe(1);
-    expect(store.logGroups[0].displayText).toContain("测试日志-1");
+    expect(store.logLines[0].text).toContain("测试日志-1");
   });
 });

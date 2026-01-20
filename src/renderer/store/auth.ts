@@ -13,7 +13,6 @@ export const useAuthStore = defineStore('auth', {
     rememberToken: false,
     connected: false,
     userName: '',
-    username: '',
     error: '',
     busy: false,
   }),
@@ -31,7 +30,6 @@ export const useAuthStore = defineStore('auth', {
       if (isE2E) {
         this.connected = true
         this.userName = 'E2E'
-        this.username = 'e2e'
         const projects = useProjectsStore()
         projects.loadProjects()
       }
@@ -59,7 +57,6 @@ export const useAuthStore = defineStore('auth', {
       if (isE2E) {
         this.connected = true
         this.userName = 'E2E'
-        this.username = 'e2e'
         const projects = useProjectsStore()
         projects.loadProjects()
         return
@@ -70,7 +67,6 @@ export const useAuthStore = defineStore('auth', {
         if (res?.ok) {
           this.connected = true
           this.userName = res.user?.name || ''
-          this.username = res.user?.username || ''
           this.saveLocal()
           const projects = useProjectsStore()
           projects.loadProjects()

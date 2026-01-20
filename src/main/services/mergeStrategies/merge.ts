@@ -283,16 +283,44 @@ export async function runAtomicBatchMergeByMerge(
           mrDetails: (check as any)?.details,
         });
         if (resolution.resolved) {
-          log?.(`用户标记冲突已解决，重新检测可合并状态...`);
+          const commitPushed = (resolution as any)?.commitPushed;
+          if (commitPushed) {
+            log?.(`用户已提交冲突解决到源分支，等待 GitLab 更新 MR 状态...`);
+            log?.(`提示：由于使用 Commits API 提交，GitLab 需要更多时间重新计算 MR 状态（最多等待 3 分钟）...`);
+          } else {
+            log?.(`用户标记冲突已解决，重新检测可合并状态...`);
+            log?.(`提示：GitLab 需要时间处理提交并更新 MR 状态，最多等待 2 分钟...`);
+          }
           const recheck = await waitUntilMergeable(client, projectId, iid, {
             onProgress: (m) => log?.(m),
             strictConflictCheck: false,
+            maxRetries: commitPushed ? 90 : 60, // 如果是 commit 提交，等待 3 分钟；否则 2 分钟
+            pollIntervalMs: 2000,
           });
           if (recheck.ok) {
             log?.(`冲突已解决且 MR 可合并: ${c.source} -> ${c.target}`);
             continue;
+          } else if (recheck.reason?.includes('MR 已处于 merged')) {
+            // MR 已经被合并，说明冲突解决成功
+            log?.(`✓ MR 已被合并: ${c.source} -> ${c.target} (MR !${iid})`);
+            continue;
+          } else if (recheck.reason?.includes('MR 已处于 closed')) {
+            // MR 被关闭，可能是用户在 GitLab 上手动关闭的
+            log?.(`警告：MR 已被关闭: ${c.source} -> ${c.target} (MR !${iid})`, true);
+            log?.(`如果您在 GitLab 网页上手动合并了此 MR，请忽略此警告。`, false);
+            // 不触发回滚，直接跳过
+            continue;
           } else {
             log?.(`重新检测失败: ${recheck.reason}`, true);
+            if (commitPushed) {
+              log?.(`提示：您已成功提交冲突解决到源分支 ${c.source}，但 GitLab 可能需要更多时间更新 MR 状态。`, true);
+              log?.(`建议操作：`, true);
+              log?.(`  1. 在 GitLab 网页上打开 MR !${iid}，检查是否仍有冲突`, true);
+              log?.(`  2. 如果 MR 显示"可以合并"，请手动点击合并按钮`, true);
+              log?.(`  3. 如果 MR 仍显示有冲突，请检查提交的文件是否正确`, true);
+            } else {
+              log?.(`提示：如果您确认已解决所有冲突，可能是 GitLab 服务器响应较慢。建议：1) 在 GitLab 网页上手动检查 MR 状态；2) 如果 MR 显示可合并，可手动点击合并按钮。`, true);
+            }
             finalCheck = recheck;
           }
         } else {

@@ -420,7 +420,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from './renderer/store/auth'
 import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
@@ -460,25 +460,6 @@ const sourceBranch = computed(() => projects.selectedSourceBranch)
 const selectedTargets = computed(() => merge.selectedTargets)
 
 const sourceFilter = ref('')
-const viewportWidth = ref<number>(typeof window !== 'undefined' ? window.innerWidth : 1024)
-let resizeTimer: number | null = null
-
-function onResize() {
-  if (resizeTimer != null) window.clearTimeout(resizeTimer)
-  resizeTimer = window.setTimeout(() => {
-    viewportWidth.value = window.innerWidth
-  }, 120)
-}
-
-onMounted(() => {
-  window.addEventListener('resize', onResize, { passive: true })
-  viewportWidth.value = window.innerWidth
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize as any)
-  if (resizeTimer != null) window.clearTimeout(resizeTimer)
-})
 
 const themeVars = useThemeVars()
 
@@ -732,7 +713,6 @@ const sourceAtTop = ref(true)
 const sourceAtBottom = ref(true)
 const targetAtTop = ref(true)
 const targetAtBottom = ref(true)
-const lastTargetClicked = ref<string>('')
 const isAuthExpanded = ref(true)
 
 function scrollEventTargetIntoView(e: MouseEvent) {
@@ -786,7 +766,6 @@ function onClickTargetRow(name: string, e: MouseEvent) {
 }
 
 function onToggleTarget(name: string) {
-  lastTargetClicked.value = name
   merge.toggleTarget(name)
 }
 
