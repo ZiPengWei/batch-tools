@@ -294,6 +294,7 @@ vi.mock("../src/renderer/ipc/bridge", () => {
     resolveConflict: vi.fn().mockResolvedValue({ ok: true }),
     openExternal: vi.fn(),
     getFileContent: vi.fn(),
+    getFileMetadata: vi.fn().mockResolvedValue({ last_commit_id: "lc_default" }),
     createCommit: vi.fn(),
     getMergeBase: vi.fn(),
     getMergeRequestChanges: vi.fn().mockResolvedValue({ changes: [] }),
@@ -1068,6 +1069,9 @@ describe("ConflictDialog 交互", () => {
 
     (bridge as any).createCommit.mockResolvedValueOnce({ ok: true });
     (bridge as any).resolveConflict.mockResolvedValueOnce({ ok: true });
+    (bridge as any).getFileMetadata.mockResolvedValueOnce({
+      last_commit_id: "lc_update_1",
+    });
 
     const wrapper = mount(ConflictDialog as any, {
       props: {
@@ -1086,14 +1090,25 @@ describe("ConflictDialog 交互", () => {
 
     await nextTick();
     const setupState = (wrapper.vm as any).$?.setupState || {};
-    setupState.pendingActions.value = [
+    const pending = [
       reactive({ action: "update", file_path: "a.txt", content: "X" }),
     ];
+    if (setupState.pendingActions?.value != null)
+      setupState.pendingActions.value = pending;
+    else setupState.pendingActions = pending;
 
     await setupState.confirmAndCommit();
 
     expect((bridge as any).createCommit).toHaveBeenCalled();
     const payload = ((bridge as any).createCommit as any).mock.calls[0][0];
+    expect(payload.actions).toEqual([
+      {
+        action: "update",
+        file_path: "a.txt",
+        content: "X",
+        last_commit_id: "lc_update_1",
+      },
+    ]);
     if (typeof (globalThis as any).structuredClone === "function") {
       expect(() =>
         (globalThis as any).structuredClone(payload.actions)
@@ -1871,7 +1886,7 @@ describe("ConflictDialog 交互", () => {
 
     expect((bridge as any).resolveConflict).toHaveBeenCalledWith({
       runId: "r_gitlab_resolve_1",
-      resolution: { resolved: true },
+      resolution: { resolved: true, commitPushed: true },
     });
 
     wrapper.unmount();
@@ -1970,12 +1985,278 @@ describe("ConflictDialog 交互", () => {
 
     expect((bridge as any).resolveConflict).toHaveBeenCalledWith({
       runId: "r_gitlab_resolve_map_1",
-      resolution: { resolved: true },
+      resolution: { resolved: true, commitPushed: true },
     });
 
     wrapper.unmount();
     (globalThis as any).alert = originalAlert;
     vi.useRealTimers();
+  });
+
+  it("GitLab resolve_conflicts 返回失败时不应提前结束原合并流程，允许用户重试", async () => {
+    vi.useFakeTimers();
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    const originalAlert = (globalThis as any).alert;
+    (globalThis as any).alert = vi.fn();
+
+    (bridge as any).getMergeBase.mockResolvedValue("baseSha");
+    (bridge as any).getFileContent.mockImplementation(async ({ ref }: any) => {
+      if (ref === "baseSha") return "B1\nB2\nB3";
+      if (ref === "dev") return "L1\nL2\nL3";
+      if (ref === "wzp-fix") return "R1\nR2\nR3";
+      return "";
+    });
+    (bridge as any).getMergeRequestConflictForPath.mockResolvedValueOnce({
+      sections: [{ id: "sec_1" }],
+    });
+    (bridge as any).resolveMergeRequestConflicts.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      data: { message: "conflicts still present" },
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_gitlab_resolve_fail_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1291,
+          mrWebUrl: "http://172.16.43.4:30085/group/proj/-/merge_requests/1291",
+          conflicts: [{ type: "text", new_path: "src/api/activity.js" }],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    for (let i = 0; i < 80; i++) {
+      await nextTick();
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+      const setupState = (wrapper.vm as any).$?.setupState || {};
+      const loading = setupState.loading?.value ?? setupState.loading;
+      const middleEditor =
+        setupState.middleEditor?.value ?? setupState.middleEditor;
+      if (loading === false && middleEditor) break;
+    }
+
+    const acceptBtn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().trim() === "接受本地更改");
+    expect(acceptBtn).toBeTruthy();
+    await (acceptBtn as any).trigger("click");
+
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    (bridge as any).resolveConflict.mockClear?.();
+
+    if (setupState.commitMessage?.value != null)
+      setupState.commitMessage.value = "解决失败重试测试";
+    else setupState.commitMessage = "解决失败重试测试";
+
+    if (setupState.finalConfirmVisible?.value != null)
+      setupState.finalConfirmVisible.value = true;
+    else setupState.finalConfirmVisible = true;
+
+    await nextTick();
+    await setupState.confirmAndResolveConflicts();
+
+    expect((bridge as any).resolveMergeRequestConflicts).toHaveBeenCalled();
+    expect((bridge as any).resolveConflict).not.toHaveBeenCalled();
+    expect(wrapper.emitted("close")).toBeFalsy();
+    expect(String((globalThis as any).alert.mock.calls[0]?.[0] || "")).toContain(
+      "仍保持打开状态"
+    );
+
+    wrapper.unmount();
+    (globalThis as any).alert = originalAlert;
+    vi.useRealTimers();
+  });
+
+  it("提交到源分支失败时不应提前结束原合并流程，允许用户重试", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick, reactive } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    const originalAlert = (globalThis as any).alert;
+    (globalThis as any).alert = vi.fn();
+
+    (bridge as any).createCommit.mockRejectedValueOnce(new Error("network boom"));
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_commit_fail_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    await nextTick();
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    setupState.pendingActions.value = [
+      reactive({ action: "update", file_path: "a.txt", content: "X" }),
+    ];
+    if (setupState.commitMessage?.value != null)
+      setupState.commitMessage.value = "提交失败重试测试";
+    else setupState.commitMessage = "提交失败重试测试";
+
+    (bridge as any).resolveConflict.mockClear?.();
+
+    await setupState.confirmAndCommit();
+
+    expect((bridge as any).createCommit).toHaveBeenCalled();
+    expect((bridge as any).resolveConflict).not.toHaveBeenCalled();
+    expect(wrapper.emitted("close")).toBeFalsy();
+    expect(String((globalThis as any).alert.mock.calls[0]?.[0] || "")).toContain(
+      "仍保持打开状态"
+    );
+
+    wrapper.unmount();
+    (globalThis as any).alert = originalAlert;
+  });
+
+  it("提交到源分支时，若源分支不存在该文件则应使用 create 动作", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick, reactive } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).createCommit.mockResolvedValueOnce({ ok: true });
+    (bridge as any).resolveConflict.mockResolvedValueOnce({ ok: true });
+    (bridge as any).getFileMetadata.mockImplementation(async ({ filePath, ref }: any) => {
+      if (ref === "wzp-fix" && filePath === "new-file.txt") {
+        return null;
+      }
+      return { last_commit_id: "lc_default" };
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_commit_create_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    await nextTick();
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const createConflictFiles = [{ type: "text", new_path: "new-file.txt" }];
+    if (setupState.conflictFiles?.value != null)
+      setupState.conflictFiles.value = createConflictFiles;
+    else setupState.conflictFiles = createConflictFiles;
+    const createPending = [
+      reactive({ action: "update", file_path: "new-file.txt", content: "X" }),
+    ];
+    if (setupState.pendingActions?.value != null)
+      setupState.pendingActions.value = createPending;
+    else setupState.pendingActions = createPending;
+    if (setupState.commitMessage?.value != null)
+      setupState.commitMessage.value = "create action test";
+    else setupState.commitMessage = "create action test";
+
+    await setupState.confirmAndCommit();
+
+    const payload = ((bridge as any).createCommit as any).mock.calls.at(-1)?.[0];
+    expect(payload.actions).toEqual([
+      { action: "create", file_path: "new-file.txt", content: "X" },
+    ]);
+
+    wrapper.unmount();
+  });
+
+  it("提交到源分支时，重命名冲突应使用 move 动作并携带 previous_path", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { nextTick, reactive } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    (bridge as any).createCommit.mockResolvedValueOnce({ ok: true });
+    (bridge as any).resolveConflict.mockResolvedValueOnce({ ok: true });
+    (bridge as any).getFileMetadata.mockImplementation(async ({ filePath, ref }: any) => {
+      if (ref === "wzp-fix" && filePath === "renamed-file.txt") {
+        return null;
+      }
+      if (ref === "wzp-fix" && filePath === "legacy-file.txt") {
+        return { last_commit_id: "lc_move_old" };
+      }
+      return { last_commit_id: "lc_default" };
+    });
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_commit_move_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    await nextTick();
+    const setupState = (wrapper.vm as any).$?.setupState || {};
+    const moveConflictFiles = [
+      { type: "text", old_path: "legacy-file.txt", new_path: "renamed-file.txt" },
+    ];
+    if (setupState.conflictFiles?.value != null)
+      setupState.conflictFiles.value = moveConflictFiles;
+    else setupState.conflictFiles = moveConflictFiles;
+    const movePending = [
+      reactive({ action: "update", file_path: "renamed-file.txt", content: "RENAMED" }),
+    ];
+    if (setupState.pendingActions?.value != null)
+      setupState.pendingActions.value = movePending;
+    else setupState.pendingActions = movePending;
+    if (setupState.commitMessage?.value != null)
+      setupState.commitMessage.value = "move action test";
+    else setupState.commitMessage = "move action test";
+
+    await setupState.confirmAndCommit();
+
+    const payload = ((bridge as any).createCommit as any).mock.calls.at(-1)?.[0];
+    expect(payload.actions).toEqual([
+      {
+        action: "move",
+        previous_path: "legacy-file.txt",
+        file_path: "renamed-file.txt",
+        content: "RENAMED",
+        last_commit_id: "lc_move_old",
+      },
+    ]);
+
+    wrapper.unmount();
   });
 
   it("本地 Git 检测返回多文件时应全部展示并默认全选", async () => {
@@ -2305,6 +2586,62 @@ describe("ConflictDialog 交互", () => {
       runId: "r2",
       resolution: { resolved: false },
     });
+    expect(wrapper.emitted("close")).toBeTruthy();
+
+    wrapper.unmount();
+  });
+
+  it("取消合并时应等待 resolveConflict 完成后再关闭弹窗", async () => {
+    const { mount, flushPromises } = await import("@vue/test-utils");
+    const { nextTick } = await import("vue");
+    const bridge = await import("../src/renderer/ipc/bridge");
+    const ConflictDialog = (
+      await import("../src/renderer/components/ConflictDialog.vue")
+    ).default;
+
+    let finishResolve: (() => void) | null = null;
+    (bridge as any).resolveConflict.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishResolve = () => resolve({ ok: true });
+        })
+    );
+
+    const wrapper = mount(ConflictDialog as any, {
+      props: {
+        visible: true,
+        conflictData: {
+          runId: "r_cancel_wait_1",
+          projectId: 1,
+          source: "wzp-fix",
+          target: "dev",
+          mrIid: 1222,
+          conflicts: [],
+        },
+      },
+      attachTo: document.body,
+    });
+
+    await nextTick();
+    const btn = wrapper
+      .findAll("button")
+      .find((b: any) => b.text().includes("取消合并"));
+    expect(btn).toBeTruthy();
+
+    const triggerPromise = (btn as any).trigger("click");
+    await nextTick();
+
+    expect((bridge as any).resolveConflict).toHaveBeenCalledWith({
+      runId: "r_cancel_wait_1",
+      resolution: { resolved: false },
+    });
+    expect(wrapper.emitted("close")).toBeFalsy();
+
+    finishResolve?.();
+    await triggerPromise;
+    await nextTick();
+    await flushPromises();
+
     expect(wrapper.emitted("close")).toBeTruthy();
 
     wrapper.unmount();

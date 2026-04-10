@@ -287,3 +287,45 @@ describe("GitLabClient.conflicts.json", () => {
     );
   });
 });
+
+describe("GitLabClient.file metadata", () => {
+  it("repository files HEAD 200 时应解析 last_commit_id", async () => {
+    const axiosMod: any = await import("axios");
+    const head = vi.fn().mockResolvedValueOnce({
+      status: 200,
+      headers: {
+        "x-gitlab-last-commit-id": "abc123",
+        "x-gitlab-content-sha256": "sha256v",
+        "x-gitlab-size": "42",
+      },
+    });
+    (axiosMod.default.create as any).mockReturnValueOnce({ head });
+
+    const { GitLabClient } = await import("../src/main/services/gitlabClient");
+    const client = new GitLabClient("http://gitlab.example", "t");
+    const meta = await client.getFileMetadata(1, "src/a.txt", "feat");
+
+    expect(meta).toEqual({
+      file_path: "src/a.txt",
+      ref: "feat",
+      last_commit_id: "abc123",
+      content_sha256: "sha256v",
+      size: 42,
+    });
+  });
+
+  it("repository files HEAD 404 时应返回 null", async () => {
+    const axiosMod: any = await import("axios");
+    const head = vi.fn().mockResolvedValueOnce({
+      status: 404,
+      headers: {},
+    });
+    (axiosMod.default.create as any).mockReturnValueOnce({ head });
+
+    const { GitLabClient } = await import("../src/main/services/gitlabClient");
+    const client = new GitLabClient("http://gitlab.example", "t");
+    const meta = await client.getFileMetadata(1, "src/missing.txt", "feat");
+
+    expect(meta).toBeNull();
+  });
+});

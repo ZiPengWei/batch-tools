@@ -167,10 +167,7 @@
                       <div
                         aria-label="项目列表"
                         :style="styles.scrollArea"
-                        @scroll="onProjectScroll"
                       >
-                        <div :style="projectAtTop ? styles.shadowHidden : styles.scrollShadowTop" />
-                        <div :style="projectAtBottom ? styles.shadowHidden : styles.scrollShadowBottom" />
                         <div :style="styles.scrollInner">
                           <div
                             v-if="projects.filteredItems.length"
@@ -248,10 +245,7 @@
                       <div
                         aria-label="源分支列表"
                         :style="styles.scrollArea"
-                        @scroll="onSourceScroll"
                       >
-                        <div :style="sourceAtTop ? styles.shadowHidden : styles.scrollShadowTop" />
-                        <div :style="sourceAtBottom ? styles.shadowHidden : styles.scrollShadowBottom" />
                         <div :style="styles.scrollInner">
                           <div
                             v-if="displaySourceBranches.length"
@@ -328,10 +322,7 @@
                       <div
                         aria-label="目标分支列表"
                         :style="styles.scrollArea"
-                        @scroll="onTargetScroll"
                       >
-                        <div :style="targetAtTop ? styles.shadowHidden : styles.scrollShadowTop" />
-                        <div :style="targetAtBottom ? styles.shadowHidden : styles.scrollShadowBottom" />
                         <div :style="styles.scrollInner">
                           <div
                             v-if="displayTargetRows.length"
@@ -410,7 +401,6 @@
               :conflict-data="conflictData"
               :visible="conflictVisible"
               @close="conflictVisible = false"
-              @resolved="onConflictResolved"
             />
           </n-loading-bar-provider>
         </n-notification-provider>
@@ -586,29 +576,6 @@ const styles = computed(() => {
       flexDirection: 'column',
       gap: '4px',
     },
-    scrollShadowTop: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      height: '12px',
-      background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0))',
-      pointerEvents: 'none',
-      zIndex: 1,
-    },
-    scrollShadowBottom: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      height: '12px',
-      background: 'linear-gradient(to top, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0))',
-      pointerEvents: 'none',
-      zIndex: 1,
-    },
-    shadowHidden: {
-      display: 'none',
-    },
     listItemButton: {
       justifyContent: 'flex-start',
       padding: '6px 10px 6px 14px',
@@ -707,12 +674,6 @@ const mergeButtonText = computed(() => {
 })
 
 const batchMergeFlowDialogRef = ref<BatchMergeFlowDialogExposed | null>(null)
-const projectAtTop = ref(true)
-const projectAtBottom = ref(true)
-const sourceAtTop = ref(true)
-const sourceAtBottom = ref(true)
-const targetAtTop = ref(true)
-const targetAtBottom = ref(true)
 const isAuthExpanded = ref(true)
 
 function scrollEventTargetIntoView(e: MouseEvent) {
@@ -721,33 +682,6 @@ function scrollEventTargetIntoView(e: MouseEvent) {
   const fn = (el as any).scrollIntoView as undefined | ((options?: any) => void)
   if (typeof fn !== 'function') return
   fn.call(el, { block: 'nearest' })
-}
-
-function updateScrollShadow(el: HTMLElement, atTop: { value: boolean }, atBottom: { value: boolean }) {
-  const st = Number((el as any).scrollTop) || 0
-  const ch = Number(el.clientHeight) || 0
-  const sh = Number(el.scrollHeight) || 0
-
-  atTop.value = st <= 0
-  atBottom.value = sh <= ch || st + ch >= sh - 1
-}
-
-function onProjectScroll(e: Event) {
-  const el = e.target as HTMLElement | null
-  if (!el) return
-  updateScrollShadow(el, projectAtTop, projectAtBottom)
-}
-
-function onSourceScroll(e: Event) {
-  const el = e.target as HTMLElement | null
-  if (!el) return
-  updateScrollShadow(el, sourceAtTop, sourceAtBottom)
-}
-
-function onTargetScroll(e: Event) {
-  const el = e.target as HTMLElement | null
-  if (!el) return
-  updateScrollShadow(el, targetAtTop, targetAtBottom)
 }
 
 function onClickProject(p: { id: number; display: string }, e: MouseEvent) {
@@ -786,10 +720,6 @@ function onClickBatch() {
   if (!projects.selectedSourceBranch) return
   if (!merge.selectedTargets.length) return
   batchMergeFlowDialogRef.value?.openConfirm()
-}
-
-function onConflictResolved() {
-  void batchMergeFlowDialogRef.value?.confirmRun()
 }
 
 watch(

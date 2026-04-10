@@ -6,6 +6,7 @@ import type {
   GitLabMergeRequest,
   GitLabMergeRequestChanges,
   GitLabProject,
+  GitLabRepositoryFileMetadata,
   GitLabUser,
 } from "../../shared/gitlab/types";
 
@@ -684,6 +685,43 @@ export class GitLabClient {
       return typeof res.data === "string" ? res.data : JSON.stringify(res.data);
     } catch (e) {
       console.error(`Failed to get file content: ${filePath} @ ${ref}`, e);
+      throw e;
+    }
+  }
+
+  async getFileMetadata(
+    projectId: number,
+    filePath: string,
+    ref: string
+  ): Promise<GitLabRepositoryFileMetadata | null> {
+    try {
+      const encoded = encodeURIComponent(filePath);
+      const res = await requestWithRetry(() =>
+        this.http.head(`/api/v4/projects/${projectId}/repository/files/${encoded}`, {
+          params: { ref },
+          validateStatus: (status) =>
+            (status >= 200 && status < 300) || status === 404,
+        })
+      );
+      if (res.status === 404) return null;
+      const headers = res.headers ?? {};
+      const getHeader = (name: string) =>
+        String((headers as any)?.[name.toLowerCase()] ?? "").trim();
+      return {
+        file_path: filePath,
+        ref,
+        last_commit_id:
+          getHeader("x-gitlab-last-commit-id") || undefined,
+        content_sha256:
+          getHeader("x-gitlab-content-sha256") || undefined,
+        size: (() => {
+          const raw = getHeader("x-gitlab-size");
+          const n = Number(raw);
+          return Number.isFinite(n) ? n : undefined;
+        })(),
+      };
+    } catch (e) {
+      console.error(`Failed to get file metadata: ${filePath} @ ${ref}`, e);
       throw e;
     }
   }

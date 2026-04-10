@@ -40,6 +40,7 @@ export type MergeResult =
 export type ConflictResolution = {
   resolved: boolean;
   message?: string;
+  commitPushed?: boolean;
 };
 
 export type ConflictHandler = (data: {

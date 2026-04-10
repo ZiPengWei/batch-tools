@@ -79,6 +79,14 @@ export async function getFileContent(payload: {
   return invoke()("gitlab:get-file-content", payload);
 }
 
+export async function getFileMetadata(payload: {
+  projectId: number;
+  filePath: string;
+  ref: string;
+}) {
+  return invoke()("gitlab:get-file-metadata", payload);
+}
+
 export async function getMergeRequestChanges(payload: {
   projectId: number;
   mrIid: number;

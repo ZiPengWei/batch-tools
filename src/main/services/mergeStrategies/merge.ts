@@ -283,10 +283,10 @@ export async function runAtomicBatchMergeByMerge(
           mrDetails: (check as any)?.details,
         });
         if (resolution.resolved) {
-          const commitPushed = (resolution as any)?.commitPushed;
+          const commitPushed = Boolean(resolution.commitPushed);
           if (commitPushed) {
             log?.(`用户已提交冲突解决到源分支，等待 GitLab 更新 MR 状态...`);
-            log?.(`提示：由于使用 Commits API 提交，GitLab 需要更多时间重新计算 MR 状态（最多等待 3 分钟）...`);
+            log?.(`提示：冲突解决已生成新提交，GitLab 需要更多时间重新计算 MR 状态（最多等待 3 分钟）...`);
           } else {
             log?.(`用户标记冲突已解决，重新检测可合并状态...`);
             log?.(`提示：GitLab 需要时间处理提交并更新 MR 状态，最多等待 2 分钟...`);

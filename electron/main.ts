@@ -315,6 +315,20 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  "gitlab:get-file-metadata",
+  async (
+    _event,
+    payload: { projectId: number; filePath: string; ref: string }
+  ) => {
+    return await gitlab.getFileMetadata(
+      payload.projectId,
+      payload.filePath,
+      payload.ref
+    );
+  }
+);
+
+ipcMain.handle(
   "gitlab:get-merge-request-changes",
   async (_event, payload: { projectId: number; mrIid: number }) => {
     return await gitlab.getMergeRequestChanges(

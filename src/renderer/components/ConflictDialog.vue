@@ -790,7 +790,7 @@
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, onUnmounted, onMounted, toRaw, nextTick, onErrorCaptured } from 'vue';
 import { NButton, NCheckbox, NCheckboxGroup, NInput } from '../ui/naive';
-import { getFileContent, createCommit, resolveConflict, openExternal, getMergeBase, getMergeRequestChanges, getMergeRequestConflicts, getMergeRequestConflictsFull, getMergeRequest, getMergeRequestConflictForPath, resolveMergeRequestConflicts, localGitPrepareConflicts, localGitGetFileContents, localGitMergeFileContents, localGitCleanup } from '../ipc/bridge';
+import { getFileContent, getFileMetadata, createCommit, resolveConflict, openExternal, getMergeBase, getMergeRequestChanges, getMergeRequestConflicts, getMergeRequestConflictsFull, getMergeRequest, getMergeRequestConflictForPath, resolveMergeRequestConflicts, localGitPrepareConflicts, localGitGetFileContents, localGitMergeFileContents, localGitCleanup } from '../ipc/bridge';
 import { parseGitConflictMarkers } from '../utils/conflictMarkers';
 
 // Ensure styles are loaded
@@ -3209,6 +3209,7 @@ async function confirmAndResolveConflicts() {
     alert('提交说明不能为空。');
     return;
   }
+  let gitlabSubmitSucceeded = false;
   try {
     resolveConflictsLoading.value = true;
     const filesPayload: any[] = [];
@@ -3256,38 +3257,25 @@ async function confirmAndResolveConflicts() {
       try {
         if (data != null) extra = `\n\n响应数据:\n${JSON.stringify(data, null, 2)}`;
       } catch { }
-      alert(`GitLab 提交失败: ${status ? `HTTP ${status}` : errMsg}${extra}`);
-      // GitLab API 返回失败，标记合并为失败状态
-      try {
-        await resolveConflict({
-          runId: runId.value,
-          resolution: { resolved: false }
-        });
-      } catch (resolveErr) {
-        console.error('标记合并失败时出错：', resolveErr);
-      }
+      alert(`GitLab 提交失败: ${status ? `HTTP ${status}` : errMsg}${extra}\n\n本次冲突处理仍保持打开状态，您可以修正后重试，或手动取消本次合并。`);
       return;
     }
+    gitlabSubmitSucceeded = true;
     try {
       if (localGitEnabled.value) await localGitCleanup({ runId: runId.value });
     } catch { }
     await resolveConflict({
       runId: runId.value,
-      resolution: { resolved: true }
+      resolution: { resolved: true, commitPushed: true }
     });
     emit('resolved');
     emit('close');
   } catch (e) {
     const msg = e instanceof Error ? (e.stack || e.message) : String(e);
-    alert('GitLab 提交失败: ' + msg);
-    // 提交失败时，标记合并为失败状态
-    try {
-      await resolveConflict({
-        runId: runId.value,
-        resolution: { resolved: false }
-      });
-    } catch (resolveErr) {
-      console.error('标记合并失败时出错：', resolveErr);
+    if (gitlabSubmitSucceeded) {
+      alert(`GitLab 已提交成功，但同步主流程状态失败：${msg}\n\n您可以稍后点击“我已在 GitLab 解决”，或关闭后重新进入 MR 检查状态。`);
+    } else {
+      alert(`GitLab 提交失败: ${msg}\n\n本次冲突处理仍保持打开状态，您可以修正后重试，或手动取消本次合并。`);
     }
   } finally {
     resolveConflictsLoading.value = false;
@@ -4195,9 +4183,116 @@ function normalizeCommitActions(list: any[]) {
     if (content != null && typeof content !== 'string') {
       throw new Error(`提交数据第 ${i + 1} 项 content 不是字符串（当前类型: ${typeof content}）`);
     }
-    out.push(content == null ? { action, file_path: filePath } : { action, file_path: filePath, content });
+    const normalized: any = { action, file_path: filePath };
+    if (content != null) normalized.content = content;
+    if (a?.previous_path != null) {
+      if (typeof a.previous_path !== 'string' || !a.previous_path.trim()) {
+        throw new Error(`提交数据第 ${i + 1} 项 previous_path 非字符串或为空`);
+      }
+      normalized.previous_path = a.previous_path;
+    }
+    if (a?.last_commit_id != null) {
+      if (typeof a.last_commit_id !== 'string' || !a.last_commit_id.trim()) {
+        throw new Error(`提交数据第 ${i + 1} 项 last_commit_id 非字符串或为空`);
+      }
+      normalized.last_commit_id = a.last_commit_id;
+    }
+    if (a?.encoding != null) normalized.encoding = a.encoding;
+    if (a?.execute_filemode != null) normalized.execute_filemode = a.execute_filemode;
+    out.push(normalized);
   }
   return out;
+}
+
+const fileMetadataCache = new Map<string, Promise<any | null>>();
+
+async function getFileMetadataOnRef(refName: string, filePath: string) {
+  const ref = String(refName || '').trim();
+  const fp = String(filePath || '').trim();
+  if (!ref || !fp || !projectId.value) return null;
+  const key = `${projectId.value}::${ref}::${fp}`;
+  const cached = fileMetadataCache.get(key);
+  if (cached) return await cached;
+  const task = (async () => {
+    try {
+      const meta = await getFileMetadata({
+        projectId: projectId.value,
+        filePath: fp,
+        ref,
+      });
+      return meta || null;
+    } catch {
+      return null;
+    }
+  })();
+  fileMetadataCache.set(key, task);
+  return await task;
+}
+
+async function buildSourceBranchCommitAction(actionLike: any) {
+  const raw = toRaw(actionLike) as any;
+  const filePath = String(raw?.file_path || '').trim();
+  if (!filePath) throw new Error('提交文件路径为空');
+  const content = String(raw?.content ?? '');
+  const conflictFile = conflictFiles.value.find((f: any) => {
+    const newPath = String(f?.new_path || '').trim();
+    const oldPath = String(f?.old_path || '').trim();
+    return newPath === filePath || oldPath === filePath;
+  }) as any;
+
+  const newPath = String(conflictFile?.new_path || filePath).trim() || filePath;
+  const oldPath = String(conflictFile?.old_path || newPath).trim() || newPath;
+
+  if (!source.value) {
+    return { action: 'update' as const, file_path: newPath, content };
+  }
+
+  if (oldPath !== newPath) {
+    const [newMeta, oldMeta] = await Promise.all([
+      getFileMetadataOnRef(source.value, newPath),
+      getFileMetadataOnRef(source.value, oldPath),
+    ]);
+    const newExists = Boolean(newMeta);
+    const oldExists = Boolean(oldMeta);
+    if (!newExists && oldExists) {
+      addHistory(`检测到源分支仍使用旧路径，提交时将执行重命名：${oldPath} -> ${newPath}`);
+      return {
+        action: 'move' as const,
+        previous_path: oldPath,
+        file_path: newPath,
+        content,
+        last_commit_id: String((oldMeta as any)?.last_commit_id || '').trim() || undefined,
+      };
+    }
+    if (!newExists && !oldExists) {
+      addHistory(`检测到源分支不存在目标文件，提交时将创建：${newPath}`);
+      return { action: 'create' as const, file_path: newPath, content };
+    }
+    return {
+      action: 'update' as const,
+      file_path: newPath,
+      content,
+      last_commit_id: String((newMeta as any)?.last_commit_id || '').trim() || undefined,
+    };
+  }
+
+  const meta = await getFileMetadataOnRef(source.value, newPath);
+  if (!meta) {
+    addHistory(`检测到源分支不存在目标文件，提交时将创建：${newPath}`);
+    return { action: 'create' as const, file_path: newPath, content };
+  }
+  return {
+    action: 'update' as const,
+    file_path: newPath,
+    content,
+    last_commit_id: String((meta as any)?.last_commit_id || '').trim() || undefined,
+  };
+}
+
+async function buildSourceBranchCommitActions(list: any[]) {
+  const rawList = Array.isArray(list) ? (toRaw(list) as any[]) : [];
+  const built = await Promise.all(rawList.map((item) => buildSourceBranchCommitAction(item)));
+  return normalizeCommitActions(built);
 }
 
 function ensureCloneableForIpc(value: any, label: string) {
@@ -4288,7 +4383,7 @@ async function confirmAndCommit() {
   let commitSuccess = false;
   try {
     loading.value = true;
-    const actions = normalizeCommitActions(pendingActions.value);
+    const actions = await buildSourceBranchCommitActions(pendingActions.value);
     ensureCloneableForIpc(actions, '提交 actions');
 
     // 提交冲突解决到源分支
@@ -4317,17 +4412,10 @@ async function confirmAndCommit() {
   } catch (e) {
     console.error('提交失败，错误堆栈：', e);
     const msg = e instanceof Error ? (e.stack || e.message) : String(e);
-    alert('提交失败: ' + msg);
-    // 提交失败时，标记合并为失败状态
-    if (!commitSuccess) {
-      try {
-        await resolveConflict({
-          runId: runId.value,
-          resolution: { resolved: false }
-        });
-      } catch (resolveErr) {
-        console.error('标记合并失败时出错：', resolveErr);
-      }
+    if (commitSuccess) {
+      alert(`已提交到源分支，但同步主流程状态失败：${msg}\n\n您可以稍后点击“我已在 GitLab 解决”，或关闭后重新进入 MR 检查状态。`);
+    } else {
+      alert(`提交失败: ${msg}\n\n本次冲突处理仍保持打开状态，您可以修正后重试，或手动取消本次合并。`);
     }
   } finally {
     loading.value = false;
@@ -4335,11 +4423,11 @@ async function confirmAndCommit() {
   }
 }
 
-function cancelMerge() {
+async function cancelMerge() {
   try {
-    if (localGitEnabled.value) localGitCleanup({ runId: runId.value });
+    if (localGitEnabled.value) await localGitCleanup({ runId: runId.value });
   } catch { }
-  resolveConflict({
+  await resolveConflict({
     runId: runId.value,
     resolution: { resolved: false }
   });
@@ -4350,6 +4438,7 @@ onUnmounted(() => {
   try {
     if (localGitEnabled.value) localGitCleanup({ runId: runId.value });
   } catch { }
+  fileMetadataCache.clear();
   resetConflictWorker();
   window.removeEventListener('keydown', onKeydown, true);
   window.removeEventListener('resize', onResize, true);

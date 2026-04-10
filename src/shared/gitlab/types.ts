@@ -44,8 +44,16 @@ export type GitLabApiError = {
   data?: unknown
 }
 
+export type GitLabRepositoryFileMetadata = {
+  file_path?: string
+  last_commit_id?: string
+  ref?: string
+  size?: number
+  content_sha256?: string
+  [key: string]: unknown
+}
+
 export type CreateMergeRequestResult =
   | { status: 'noop'; message: string }
   | { status: 'error'; message: string }
   | GitLabMergeRequest
-
