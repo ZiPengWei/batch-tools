@@ -114,7 +114,7 @@
    产物在 `release/{version}/`：`CNB-Tools-Mac.dmg`、`CNB-Tools-Windows.exe`（artifactName 不含版本号，版本体现在目录与 Release/tag 上）。
 6. **创建/更新 Release 并上传**：
    - 令牌从项目根目录 `.env.local` 读取（`GITHUB_TOKEN`），仓库地址读 `GITHUB_REPO`。**不要在命令行参数、日志或对话中明文输出令牌**；用 `export GH_TOKEN=$(grep '^GITHUB_TOKEN=' .env.local | cut -d= -f2)` 方式载入。
-   - 用 GitHub API 创建 Release（`POST /repos/{repo}/releases`，tag_name 对应版本，name 与 body 用中文写功能/修复摘要）。
+   - 用 GitHub API 创建 Release（`POST /repos/{repo}/releases`，tag_name 对应版本）。**Release name 只用版本号本身（如 `v1.0.1`），不带工具名称**；body 用中文写功能/修复摘要。
    - 逐个 `POST https://uploads.github.com/repos/{repo}/releases/{id}/assets?name=...` 上传产物（`Content-Type: application/octet-stream`，`--data-binary @文件`）。
    - **同版本 Release 已存在时**：更新它——复用已有 release id，删除同名旧资产后重新上传，并追加更新说明。
    - 上传后调 `GET /repos/{repo}/releases/latest` 比对资产 `size` 与本地字节数，必须完全一致才算成功。
