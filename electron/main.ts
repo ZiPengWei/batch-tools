@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, session, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -43,12 +43,102 @@ ipcMain.handle(
   "cnb:set-auth",
   async (
     _event: IpcMainInvokeEvent,
-    payload: { baseUrl: string; token: string }
+    payload: {
+      baseUrl: string;
+      token: string;
+      webCookie?: string;
+      mode?: "token" | "cookie";
+    }
   ) => {
-    cnb.setBaseUrl(payload.baseUrl);
-    cnb.setToken(payload.token);
+    if (payload.mode === "cookie" && payload.webCookie) {
+      // Cookie 模式：走 cnb.cool 同源 API，无需访问令牌
+      cnb.setBaseUrl(payload.baseUrl || "https://cnb.cool");
+      cnb.setCookieAuth(payload.webCookie);
+    } else {
+      // 令牌模式：走 api.cnb.cool
+      cnb.setBaseUrl(payload.baseUrl);
+      cnb.setToken(payload.token);
+      if (payload.webCookie) cnb.setWebCookie(payload.webCookie);
+    }
     const res = await cnb.verifyToken();
     return res;
+  }
+);
+
+/**
+ * 打开内嵌网页登录窗口：用户在窗口内正常登录 CNB（密码/扫码/passkey），
+ * 登录成功后自动抓取会话 Cookie 返回给渲染层持久化。
+ * Cookie 模式下所有 API 走 https://cnb.cool 同源接口，无需访问令牌。
+ */
+let loginWin: BrowserWindow | null = null;
+
+ipcMain.handle("cnb:web-login", async () => {
+  if (loginWin) {
+    loginWin.focus();
+    return { ok: false, error: "登录窗口已打开，请完成登录" };
+  }
+  const ses = session.fromPartition("persist:cnb-web-login");
+  return await new Promise<any>((resolve) => {
+    let settled = false;
+    const win = new BrowserWindow({
+      width: 1024,
+      height: 760,
+      title: "登录 CNB",
+      autoHideMenuBar: true,
+      webPreferences: { session: ses, contextIsolation: true },
+    });
+    loginWin = win;
+
+    const settle = (result: any) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+      try {
+        win.close();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    // 每次页面跳转后尝试检查登录态：能拿到 cookie 且 GET /user 通过即成功
+    const checkLogin = async () => {
+      try {
+        const cookies = await ses.cookies.get({ domain: "cnb.cool" });
+        const cookieStr = cookies
+          .map((c) => `${c.name}=${c.value}`)
+          .join("; ");
+        if (!cookieStr) return;
+        const test = await cnb.testWebCookie(cookieStr);
+        if (test.ok) {
+          settle({ ok: true, cookie: cookieStr, user: test.user });
+        }
+      } catch {
+        /* ignore, 等下一次导航再检查 */
+      }
+    };
+
+    win.webContents.on("did-navigate", () => void checkLogin());
+    win.webContents.on("did-navigate-in-page", () => void checkLogin());
+    win.on("closed", () => {
+      loginWin = null;
+      if (!settled) settle({ ok: false, error: "登录窗口已关闭" });
+    });
+
+    void win.loadURL("https://cnb.cool/login");
+  });
+});
+
+/**
+ * 置顶/取消置顶仓库（写回 CNB 网页 dashboard，实现双向同步）。
+ * 需要已配置有效的网页会话 Cookie（cnb:set-auth 时传入）。
+ */
+ipcMain.handle(
+  "cnb:set-repo-pinned",
+  async (
+    _event: IpcMainInvokeEvent,
+    payload: { repo: string; pinned: boolean }
+  ) => {
+    return cnb.setRepoPinned(payload.repo, payload.pinned);
   }
 );
 
@@ -67,6 +157,7 @@ ipcMain.handle(
           search: display.toLowerCase(),
           pinyinFull: "",
           pinyinInitials: "",
+          pinned: r.pinned === true,
         };
       })
       .filter((x): x is NonNullable<typeof x> => Boolean(x))

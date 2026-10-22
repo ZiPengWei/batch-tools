@@ -84,17 +84,30 @@
                       </n-grid>
                       <n-space align="center">
                         <n-button
+                          :disabled="auth.loggingIn || auth.busy"
+                          :loading="auth.loggingIn"
+                          type="primary"
+                          @click="auth.loginViaWeb()"
+                        >
+                          {{ auth.loggingIn ? '等待登录...' : '网页账号登录（推荐）' }}
+                        </n-button>
+                        <n-button
                           :disabled="auth.busy"
                           :loading="auth.busy"
-                          type="primary"
                           @click="auth.connect()"
                         >
-                          {{ auth.busy ? '验证中...' : '验证并连接' }}
+                          {{ auth.busy ? '验证中...' : '使用令牌连接' }}
                         </n-button>
                         <n-checkbox v-model:checked="auth.rememberToken">
-                          保存 Token
+                          保存登录状态
                         </n-checkbox>
                       </n-space>
+                      <n-text
+                        depth="3"
+                        :style="styles.caption"
+                      >
+                        网页账号登录：弹出 CNB 登录窗口，无需创建令牌，并支持仓库置顶双向同步；令牌方式为兼容备选。
+                      </n-text>
                       <n-text
                         v-if="auth.connected && projects.loading"
                         depth="3"
@@ -164,17 +177,24 @@
                         placeholder="过滤仓库..."
                         @update:value="projects.setFilter"
                       />
+                      <n-text
+                        v-if="projects.pinError"
+                        :style="styles.caption"
+                        type="error"
+                      >
+                        {{ projects.pinError }}
+                      </n-text>
                       <div
                         aria-label="项目列表"
                         :style="styles.scrollArea"
                       >
                         <div :style="styles.scrollInner">
                           <div
-                            v-if="projects.filteredItems.length"
+                            v-if="projects.sortedItems.length"
                             :style="styles.listStack"
                           >
                             <n-button
-                              v-for="p in projects.filteredItems"
+                              v-for="p in projects.sortedItems"
                               :key="p.id"
                               block
                               :class="'gl-list-item'"
@@ -186,7 +206,18 @@
                               :type="projects.selectedRepo === p.id ? 'primary' : 'default'"
                               @click="onClickProject(p, $event)"
                             >
-                              <span class="gl-ellipsis-1">{{ p.display }}</span>
+                              <span
+                                class="gl-ellipsis-1"
+                                :style="styles.repoNameText"
+                              >{{ p.display }}</span>
+                              <span
+                                :data-pinned="projects.pinnedRepos.includes(p.id) ? 'true' : 'false'"
+                                :style="[styles.pinBtn, projects.pinnedRepos.includes(p.id) ? styles.pinBtnOn : styles.pinBtnOff]"
+                                :title="projects.pinnedRepos.includes(p.id) ? '取消置顶' : '置顶'"
+                                @click.stop="projects.togglePin(p.id)"
+                              >
+                                📌
+                              </span>
                             </n-button>
                           </div>
                           <div
@@ -280,6 +311,14 @@
                                 加载中...
                               </n-text>
                             </template>
+                            <div
+                              v-else-if="projects.sourceBranchesError"
+                              :style="styles.emptyFill"
+                            >
+                              <n-text type="error">
+                                {{ projects.sourceBranchesError }}
+                              </n-text>
+                            </div>
                             <n-empty
                               v-else
                               :description="projects.sourceBranches?.length && sourceFilter.trim() ? '无匹配' : '暂无数据'"
@@ -371,6 +410,14 @@
                                 加载中...
                               </n-text>
                             </template>
+                            <div
+                              v-else-if="projects.targetBranchesError"
+                              :style="styles.emptyFill"
+                            >
+                              <n-text type="error">
+                                {{ projects.targetBranchesError }}
+                              </n-text>
+                            </div>
                             <n-empty
                               v-else
                               description="暂无数据"
@@ -567,6 +614,26 @@ const styles = computed(() => {
     listItemButton: {
       justifyContent: 'flex-start',
       padding: '6px 10px 6px 14px',
+    },
+    repoNameText: {
+      flex: '1 1 auto',
+      minWidth: 0,
+      textAlign: 'left',
+    },
+    pinBtn: {
+      flex: '0 0 auto',
+      marginLeft: '8px',
+      fontSize: '12px',
+      lineHeight: 1,
+      cursor: 'pointer',
+      userSelect: 'none',
+    },
+    pinBtnOn: {
+      opacity: 1,
+    },
+    pinBtnOff: {
+      opacity: 0.3,
+      filter: 'grayscale(1)',
     },
     listSeparator: {
       height: '1px',

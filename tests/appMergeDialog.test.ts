@@ -4,13 +4,17 @@ import { reactive } from "vue";
 const authStoreMock = {
   baseUrl: "https://api.cnb.cool",
   token: "t",
+  webCookie: "",
+  mode: "token",
   rememberToken: false,
   connected: true,
   busy: false,
+  loggingIn: false,
   userName: "u",
   error: "",
   loadLocal: vi.fn(),
   connect: vi.fn(),
+  loginViaWeb: vi.fn(),
 };
 
 const projectsStoreMock = reactive({
@@ -18,6 +22,9 @@ const projectsStoreMock = reactive({
   loading: false,
   error: "",
   filter: "",
+  pinnedRepos: [],
+  pinError: "",
+  pinningId: "",
   selectedRepo: "org/demo",
   selectedProjectName: "org/demo",
   sourceBranches: ["feat"],
@@ -31,7 +38,11 @@ const projectsStoreMock = reactive({
   selectProject: vi.fn(),
   loadAllBranches: vi.fn(),
   setFilter: vi.fn(),
+  togglePin: vi.fn(),
   get filteredItems() {
+    return this.items;
+  },
+  get sortedItems() {
     return this.items;
   },
 }) as any;
@@ -75,6 +86,8 @@ vi.mock("../src/renderer/ipc/bridge", () => {
     onBatchMergeLog: vi.fn(() => () => {}),
     batchMerge: vi.fn(),
     setAuth: vi.fn(),
+    setRepoPinned: vi.fn(),
+    webLogin: vi.fn(),
     listProjects: vi.fn(),
     listBranches: vi.fn(),
     openExternal: vi.fn(),

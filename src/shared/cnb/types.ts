@@ -13,6 +13,10 @@ export type CnbRepo = {
   path?: string
   web_url?: string
   description?: string
+  /** 是否被当前访问者（令牌所属用户）在 CNB 服务端置顶 */
+  pinned?: boolean
+  /** 服务端置顶时间 */
+  pinned_time?: string
   [key: string]: unknown
 }
 

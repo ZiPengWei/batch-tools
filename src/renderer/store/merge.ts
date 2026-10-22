@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { batchMerge, onBatchMergeLog } from "../ipc/bridge";
 
 const isE2E =
@@ -190,3 +190,8 @@ export const useMergeStore = defineStore("merge", {
     },
   },
 });
+
+// 开发模式下支持 store 热更新（否则 HMR 后仍复用旧 store 实例）
+if (import.meta.hot) {
+  acceptHMRUpdate(useMergeStore, import.meta.hot);
+}

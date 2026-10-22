@@ -13,6 +13,14 @@ function createClientMock() {
   } as const;
 }
 
+/** 带真实 axios 实例结构（defaults.headers.common）的实例 mock */
+function axiosInstanceMock(methods: Record<string, unknown>) {
+  return {
+    defaults: { headers: { common: {} as Record<string, string> } },
+    ...methods,
+  };
+}
+
 const REPO = "org/repo";
 
 describe("MergeService.runBatchMerge（每个目标分支独立处理）", () => {
@@ -337,7 +345,7 @@ describe("CnbClient", () => {
     const axiosMod: any = await import("axios");
     const get = vi.fn().mockResolvedValue({ status: 200, data: [] });
     const post = vi.fn().mockResolvedValue({ status: 201, data: { number: "1" } });
-    (axiosMod.default.create as any).mockReturnValueOnce({ get, post });
+    (axiosMod.default.create as any).mockReturnValueOnce(axiosInstanceMock({ get, post }));
 
     const { CnbClient } = await import("../src/main/services/cnbClient");
     const client = new CnbClient("https://api.cnb.cool", "t");
@@ -361,7 +369,7 @@ describe("CnbClient", () => {
         isAxiosError: true,
         response: { status: 400, data: { errcode: 1, errmsg: "没有可合并的变更" } },
       });
-    (axiosMod.default.create as any).mockReturnValueOnce({ post });
+    (axiosMod.default.create as any).mockReturnValueOnce(axiosInstanceMock({ post }));
 
     const { CnbClient } = await import("../src/main/services/cnbClient");
     const client = new CnbClient("https://api.cnb.cool", "t");
@@ -374,7 +382,7 @@ describe("CnbClient", () => {
     const put = vi
       .fn()
       .mockResolvedValue({ status: 200, data: { merged: true, sha: "abc" } });
-    (axiosMod.default.create as any).mockReturnValueOnce({ put });
+    (axiosMod.default.create as any).mockReturnValueOnce(axiosInstanceMock({ put }));
 
     const { CnbClient } = await import("../src/main/services/cnbClient");
     const client = new CnbClient("https://api.cnb.cool", "t");
@@ -387,7 +395,7 @@ describe("CnbClient", () => {
   it("closePull 通过 PATCH state=closed 取消 PR", async () => {
     const axiosMod: any = await import("axios");
     const patch = vi.fn().mockResolvedValue({ status: 200, data: {} });
-    (axiosMod.default.create as any).mockReturnValueOnce({ patch });
+    (axiosMod.default.create as any).mockReturnValueOnce(axiosInstanceMock({ patch }));
 
     const { CnbClient } = await import("../src/main/services/cnbClient");
     const client = new CnbClient("https://api.cnb.cool", "t");
@@ -406,7 +414,7 @@ describe("CnbClient", () => {
         { number: "2", state: "open", head: { ref: "refs/heads/feat" } },
       ],
     });
-    (axiosMod.default.create as any).mockReturnValueOnce({ get });
+    (axiosMod.default.create as any).mockReturnValueOnce(axiosInstanceMock({ get }));
 
     const { CnbClient } = await import("../src/main/services/cnbClient");
     const client = new CnbClient("https://api.cnb.cool", "t");

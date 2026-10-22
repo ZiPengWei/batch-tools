@@ -114,13 +114,23 @@ async function requestWithRetry<T>(
 export class CnbClient {
   private baseUrl: string;
   private http: AxiosInstance;
+  /** cnb.cool 网页会话 Cookie（可选，用于同步置顶到网页 dashboard） */
+  private webCookie = "";
 
   constructor(baseUrl = "https://api.cnb.cool", token: string | null = null) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 20_000,
+      // 禁用环境代理（HTTP(S)_PROXY）：axios 经 HTTP 代理转发 HTTPS 请求时不走
+      // CONNECT 隧道而是明文转发，会被网关拒绝（400 The plain HTTP request was
+      // sent to HTTPS port）。本客户端面向固定国内 API（api.cnb.cool），直连即可。
+      proxy: false,
     });
+    // CNB 的 git/PR 相关接口对 Accept 头做精确校验（仅接受 application/json 或
+    // application/vnd.cnb.api+json），axios 默认的 "application/json, text/plain, */*"
+    // 会触发 406，这里显式覆盖。
+    this.http.defaults.headers.common.Accept = "application/json";
     if (token) this.setToken(token);
   }
 
@@ -130,17 +140,108 @@ export class CnbClient {
   }
 
   setToken(token: string) {
+    const common = this.httpDefaultsCommon();
+    common.Authorization = `Bearer ${token}`;
+    // 令牌模式下清理网页 Cookie，避免两套凭证互相干扰
+    delete common.Cookie;
+    delete common["X-XSRF-TOKEN"];
+    this.webCookie = "";
+  }
+
+  clearToken() {
+    delete this.httpDefaultsCommon().Authorization;
+  }
+
+  /** 设置网页会话 Cookie（仅注入 Cookie 头，不影响令牌模式） */
+  setWebCookie(cookie: string) {
+    const clean = (cookie || "").trim();
+    this.webCookie = clean;
+    const common = this.httpDefaultsCommon();
+    if (!clean) {
+      delete common.Cookie;
+      delete common["X-XSRF-TOKEN"];
+      return;
+    }
+    common.Cookie = clean;
+    const xsrf = clean.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+    if (xsrf) common["X-XSRF-TOKEN"] = decodeURIComponent(xsrf[1].trim());
+    else delete common["X-XSRF-TOKEN"];
+  }
+
+  /**
+   * 设置 cnb.cool 网页会话 Cookie（来自应用内网页登录）。
+   * Cookie 模式下走 https://cnb.cool 的同源 API（与 api.cnb.cool 路由一致），
+   * 无需访问令牌；同时自动携带 XSRF-TOKEN 供 POST/DELETE 的 CSRF 校验。
+   */
+  setCookieAuth(cookie: string) {
+    this.setWebCookie(cookie);
+    // Cookie 模式下清理令牌头，避免混淆
+    delete this.httpDefaultsCommon().Authorization;
+  }
+
+  private httpDefaultsCommon(): Record<string, any> {
     const anyHttp = this.http as any;
     if (!anyHttp.defaults) anyHttp.defaults = {};
     if (!anyHttp.defaults.headers) anyHttp.defaults.headers = {};
     if (!anyHttp.defaults.headers.common) anyHttp.defaults.headers.common = {};
-    anyHttp.defaults.headers.common.Authorization = `Bearer ${token}`;
+    return anyHttp.defaults.headers.common;
   }
 
-  clearToken() {
-    const anyHttp = this.http as any;
-    if (!anyHttp.defaults?.headers?.common) return;
-    delete anyHttp.defaults.headers.common.Authorization;
+  /** 校验网页 Cookie 是否有效（GET https://cnb.cool/user） */
+  async testWebCookie(
+    cookie: string
+  ): Promise<
+    { ok: true; user: CnbUser } | { ok: false; error: CnbApiError }
+  > {
+    try {
+      const res = await requestWithRetry(() =>
+        this.http.get<CnbUser>("https://cnb.cool/user", {
+          headers: { Cookie: cookie },
+        })
+      );
+      return { ok: true, user: res.data };
+    } catch (e) {
+      return { ok: false, error: extractErrorMessage(e) };
+    }
+  }
+
+  /**
+   * 置顶/取消置顶仓库（写回 CNB 网页 dashboard，实现双向同步）。
+   * 需要已通过网页登录获得会话 Cookie（setCookieAuth）。
+   */
+  async setRepoPinned(
+    repo: string,
+    pinned: boolean
+  ): Promise<{ ok: true } | { ok: false; error: CnbApiError }> {
+    if (!this.webCookie) {
+      return {
+        ok: false,
+        error: {
+          status: 0,
+          message: "尚未登录 CNB 网页账号，无法同步置顶（仅本地生效）",
+        },
+      };
+    }
+    const repoPath = encodeRepoPath(repo);
+    const url = `https://cnb.cool/user/dashboard/pinned-stars/${repoPath}`;
+    try {
+      await requestWithRetry(() =>
+        pinned
+          ? this.http.post(url, null, {
+              headers: { Origin: "https://cnb.cool", Referer: "https://cnb.cool/" },
+            })
+          : this.http.delete(url, {
+              headers: { Origin: "https://cnb.cool", Referer: "https://cnb.cool/" },
+            })
+      );
+      return { ok: true };
+    } catch (e) {
+      const err = extractErrorMessage(e);
+      if (err.status === 401 || err.status === 403) {
+        err.message = `网页登录已失效（HTTP ${err.status}），请重新登录：${err.message}`;
+      }
+      return { ok: false, error: err };
+    }
   }
 
   /** 获取当前用户信息（用于验证令牌有效性），需 account-profile:r 权限 */

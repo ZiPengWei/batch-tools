@@ -16,8 +16,38 @@ function invoke(): IpcInvoke {
   );
 }
 
-export async function setAuth(payload: { baseUrl: string; token: string }) {
+export async function setAuth(payload: {
+  baseUrl: string;
+  token: string;
+  /** cnb.cool 网页会话 Cookie（可选，用于置顶双向同步或 Cookie 模式认证） */
+  webCookie?: string;
+  /** 认证模式：token=访问令牌（api.cnb.cool），cookie=网页登录会话（cnb.cool） */
+  mode?: "token" | "cookie";
+}) {
   return invoke()("cnb:set-auth", payload) as Promise<any>;
+}
+
+/**
+ * 打开内嵌网页登录窗口，用户登录 CNB 后自动返回会话 Cookie。
+ */
+export async function webLogin(): Promise<
+  | { ok: true; cookie: string; user?: { name?: string; username?: string; nickname?: string } }
+  | { ok: false; error: string }
+> {
+  return invoke()("cnb:web-login");
+}
+
+/**
+ * 置顶/取消置顶仓库（写回 CNB 网页 dashboard）。
+ * 需要在认证时提供有效的网页会话 Cookie。
+ */
+export async function setRepoPinned(payload: {
+  repo: string;
+  pinned: boolean;
+}): Promise<
+  { ok: true } | { ok: false; error: { status: number; message: string } }
+> {
+  return invoke()("cnb:set-repo-pinned", payload);
 }
 
 export async function listProjects(): Promise<ListProjectsResponse> {

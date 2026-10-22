@@ -16,6 +16,8 @@ export type ListProjectsItem = {
   search: string;
   pinyinFull: string;
   pinyinInitials: string;
+  /** 是否被当前用户在 CNB 服务端置顶 */
+  pinned?: boolean;
 };
 
 export type ListProjectsResponse = {
