@@ -72,3 +72,6 @@ coverage/
 # --- Playwright 运行产物 ---
 test-results/
 playwright-report/
+
+# --- 图像生成工作目录 ---
+output/
