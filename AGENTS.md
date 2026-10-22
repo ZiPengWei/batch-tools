@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 AI 编程助手（Claude Code、Codex 等）在本仓库中工作时提供指引。
 
 ## 常用命令
 
