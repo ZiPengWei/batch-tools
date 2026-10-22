@@ -41,7 +41,7 @@ function isRetriableStatus(status: number | undefined, retry: RetryConfig) {
   return status != null && retry.statusForcelist.includes(status);
 }
 
-function extractErrorMessage(err: unknown): CnbApiError {
+export function extractErrorMessage(err: unknown): CnbApiError {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status ?? 0;
     const data = err.response?.data;
@@ -481,10 +481,18 @@ export class CnbClient {
   async mergePull(
     repo: string,
     pullNumber: string | number,
-    opts?: { mergeStyle?: "merge" | "squash" | "rebase" | "fast_forward" }
+    opts?: {
+      mergeStyle?: "merge" | "squash" | "rebase";
+      commitTitle?: string;
+      commitMessage?: string;
+    }
   ): Promise<{ merged: boolean; message: string; sha?: string }> {
     const repoPath = encodeRepoPath(repo);
     const data = {
+      // CNB 要求 commit_title 必填，缺失会返回 400 "commit_title is required"
+      commit_title: opts?.commitTitle || "Merge pull request",
+      commit_message: opts?.commitMessage,
+      // 合法值仅 merge / squash / rebase（不含 fast_forward）
       merge_style: opts?.mergeStyle ?? "merge",
     };
     const res = await requestWithRetry(() =>

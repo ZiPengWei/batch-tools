@@ -137,7 +137,9 @@ describe("MergeService.runBatchMerge（每个目标分支独立处理）", () =>
       },
     ]);
     // 无冲突分支：直接合并成功
-    expect(client.mergePull).toHaveBeenCalledWith(REPO, "12");
+    expect(client.mergePull).toHaveBeenCalledWith(REPO, "12", {
+      commitTitle: "Merge fix-1 into test [Batch Tool]",
+    });
     expect(res.merged).toEqual([
       { type: "merged", source: "fix-1", target: "test", prNumber: "12" },
     ]);
@@ -213,7 +215,9 @@ describe("MergeService.runBatchMerge（每个目标分支独立处理）", () =>
     vi.useRealTimers();
 
     expect(client.findOpenPull).toHaveBeenCalledWith(REPO, "feat", "main");
-    expect(client.mergePull).toHaveBeenCalledWith(REPO, "31");
+    expect(client.mergePull).toHaveBeenCalledWith(REPO, "31", {
+      commitTitle: "Merge feat into main [Batch Tool]",
+    });
     expect(res.ok).toBe(true);
     expect(res.merged).toEqual([
       { type: "merged", source: "feat", target: "main", prNumber: "31" },
@@ -389,7 +393,10 @@ describe("CnbClient", () => {
     const res = await client.mergePull("org/repo", "12");
     expect(res).toEqual({ merged: true, message: "", sha: "abc" });
     expect(put.mock.calls[0][0]).toBe("/org/repo/-/pulls/12/merge");
-    expect(put.mock.calls[0][1]).toEqual({ merge_style: "merge" });
+    expect(put.mock.calls[0][1]).toMatchObject({
+      commit_title: expect.any(String),
+      merge_style: "merge",
+    });
   });
 
   it("closePull 通过 PATCH state=closed 取消 PR", async () => {

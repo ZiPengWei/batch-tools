@@ -1,3 +1,4 @@
+import { extractErrorMessage } from "../cnbClient";
 import type { CnbClient } from "../cnbClient";
 import type {
   MergeConflict,
@@ -109,7 +110,10 @@ export async function runBatchMerge(
       // 无冲突 → 直接合并
       log(`无冲突，执行合并: ${source} -> ${target} (PR #${prNumber})`);
       try {
-        const res = await client.mergePull(repo, prNumber);
+        const res = await client.mergePull(repo, prNumber, {
+          // CNB 合并接口要求 commit_title 必填，缺失返回 400
+          commitTitle: `Merge ${source} into ${target} [Batch Tool]`,
+        });
         if (res.merged) {
           merged.push({ type: "merged", source, target, prNumber });
           log(`✓ 合并成功: ${source} -> ${target} (PR #${prNumber})`);
@@ -134,7 +138,8 @@ export async function runBatchMerge(
           log(`合并未完成: ${source} -> ${target} (PR #${prNumber}) - ${wait.reason}`, true);
         }
       } catch (e) {
-        const reason = String(e);
+        // 提取 CNB 返回的具体错误（如 errmsg），避免只显示笼统的 "status code 400"
+        const reason = extractErrorMessage(e).message || String(e);
         await client.closePull(repo, prNumber).catch(() => {});
         failures.push({ type: "failure", source, target, reason, prNumber });
         log(`合并调用失败: ${source} -> ${target} (PR #${prNumber}) - ${reason}`, true);
