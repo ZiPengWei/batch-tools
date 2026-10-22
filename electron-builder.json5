@@ -12,8 +12,8 @@
   mac: {
     icon: "build/icon.icns",
     target: ["dmg"],
-    // Release 资产名仅保留扩展名（不带包名/平台/版本）
-    artifactName: "${ext}",
+    // 资产名 = 包名 + 扩展名（不含平台/版本）
+    artifactName: "${productName}.${ext}",
   },
   win: {
     icon: "build/icon.png",
@@ -26,10 +26,10 @@
     ],
   },
   portable: {
-    artifactName: "${ext}",
+    artifactName: "${productName}.${ext}",
   },
   linux: {
     target: ["AppImage"],
-    artifactName: "${ext}",
+    artifactName: "${productName}.${ext}",
   },
 }

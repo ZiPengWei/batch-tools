@@ -111,7 +111,7 @@
      ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
      sh -c 'pnpm build && npx electron-builder && npx electron-builder --win --x64'
    ```
-   产物在 `release/{version}/`：`dmg`、`exe`（artifactName 仅 `${ext}`，Release 资产名不带包名/平台/版本，版本体现在目录与 Release/tag 上）。
+   产物在 `release/{version}/`：`CNB-Tools.dmg`、`CNB-Tools.exe`（artifactName = `${productName}.${ext}`，不含平台/版本，版本体现在目录与 Release/tag 上）。
 6. **创建/更新 Release 并上传**：
    - 令牌从项目根目录 `.env.local` 读取（`GITHUB_TOKEN`），仓库地址读 `GITHUB_REPO`。**不要在命令行参数、日志或对话中明文输出令牌**；用 `export GH_TOKEN=$(grep '^GITHUB_TOKEN=' .env.local | cut -d= -f2)` 方式载入。
    - 用 GitHub API 创建 Release（`POST /repos/{repo}/releases`，tag_name 对应版本）。**Release name 只用版本号本身（如 `v1.0.1`），不带工具名称**；body 用中文写功能/修复摘要。
