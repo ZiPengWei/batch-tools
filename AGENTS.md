@@ -46,8 +46,8 @@
 - `src/App.vue`
   - 主界面外壳，负责认证、仓库选择、源分支选择、目标分支选择以及对话框流程编排。
 - Pinia stores 承担大部分渲染层状态：
-  - `src/renderer/store/auth.ts` — CNB 认证（API 地址 + 访问令牌）、本地持久化设置（localStorage key `cnb-auth`）、E2E 认证绕过。
-  - `src/renderer/store/projects.ts` — 仓库列表、分支列表与选择状态（仓库以完整路径字符串 `org/repo` 标识，存于 `selectedRepo`）。
+  - `src/renderer/store/auth.ts` — CNB 认证（网页登录 Cookie / 访问令牌双模式，可切换账号、退出登录），本地持久化设置（localStorage key `cnb-auth`）、E2E 认证绕过。
+  - `src/renderer/store/projects.ts` — 仓库列表、分支列表与选择状态（仓库以完整路径字符串 `org/repo` 标识，存于 `selectedRepo`），含仓库置顶状态与服务端双向同步。
   - `src/renderer/store/merge.ts` — 目标分支选择、批量合并运行状态、流式日志与分支级结果摘要。
 - 共享类型位于：
   - `src/shared/cnb/types.ts`
@@ -57,10 +57,13 @@
 
 - `src/main/services/cnbClient.ts`
   - CNB Open API（https://api.cnb.cool/）HTTP 访问的唯一入口。
-  - 认证方式：`Authorization: Bearer <token>`。
-  - 封装：用户信息（`GET /user`）、仓库列表（`GET /user/repos?role=Developer`，分页）、分支列表、分支比较（无变更预检）、PR 的创建/查询/合并/关闭，以及按源+目标分支查找已存在的 open PR。
+  - 认证方式：令牌模式用 `Authorization: Bearer <token>`；网页登录模式用 Cookie 会话（`setCookieAuth` 注入，置顶写回必须走 Cookie）。
+  - 封装：用户信息（`GET /user`）、仓库列表（`GET /user/repos?role=Developer`，分页，含 `pinned`/`pinned_time`）、分支列表（含按提交时间排序变体 `getBranchesSortedByCommitTime`）、分支比较（无变更预检）、PR 的创建/查询/合并/关闭（按源+目标查找已存在 open PR）、仓库置顶写回（`setRepoPinned`，走 `cnb.cool/user/dashboard/pinned-stars/` 网页接口）。
   - 仓库路径会逐段 URL 编码（支持多级组织 `a/b/c`）。
-  - 内含重试/退避逻辑（429/5xx）。
+  - 内含重试/退避逻辑（429/5xx）；axios 实例统一 `Accept: application/json` 头与 `proxy: false`，勿移除。
+- `src/main/services/updateChecker.ts`
+  - 检查 GitHub `releases/latest` 是否有新版本（语义化版本比较；直连失败后走环境代理重试）。
+  - 主进程启动 3 秒后首次检查，之后每 6 小时一次；结果经 `cnb:update-status` 推送渲染层，仅提示不强制更新。
 - `src/main/services/mergeService.ts`
   - 很薄的一层入口，实际逻辑委托给 merge strategy。
 - `src/main/services/mergeStrategies/merge.ts`
@@ -102,23 +105,27 @@
 1. **前置检查**：
    - `git status` 确认工作区干净；有未提交改动则先按惯例提交（fix 分支）。
    - `pnpm check`（typecheck + 全部测试）必须全绿，失败则中止发版并报告。
-2. **递进版本号**：修改 `package.json` 的 `version`（唯一版本来源），提交（`chore: release v{X.Y.Z}`）。
-3. **同步远程**：`git push origin fix` → `git checkout master && git merge fix --ff-only && git push origin master && git checkout fix`。
-4. **打 tag**：annotated 标签 `v{X.Y.Z}`（附中文版本说明，列出主要功能与修复），`git push origin v{X.Y.Z}`。**若 tag 已存在，中止并询问用户，不得覆盖**。
-5. **打包**：完整构建 mac dmg 与 Windows 便携 exe（单文件，无安装包）。沙盒环境下必须剥离钩子与代理变量：
+2. **检查 README**：对照本次版本的全部变更，判断是否需要更新 `README.md`：
+   - **需要更新**：新增功能；用户可感知的功能调整或体验优化（如操作方式、界面布局、交互流程变化）；使用前提或依赖方式变化（如认证方式、打包产物形态）。
+   - **不需要更新**：纯内部重构、性能优化（用户无感知）、测试与工程配置、依赖升级、文案微调。
+   - 拿不准时倾向更新（README 面向使用者，宁可多说明一句）。需要更新则先改 README 并随本次发版提交一并入库，再继续后续步骤。
+3. **递进版本号**：修改 `package.json` 的 `version`（唯一版本来源），提交（`chore: release v{X.Y.Z}`）。
+4. **同步远程**：`git push origin fix` → `git checkout master && git merge fix --ff-only && git push origin master && git checkout fix`。
+5. **打 tag**：annotated 标签 `v{X.Y.Z}`（附中文版本说明，列出主要功能与修复），`git push origin v{X.Y.Z}`。**若 tag 已存在，中止并询问用户，不得覆盖**。
+6. **打包**：完整构建 mac dmg 与 Windows 便携 exe（单文件，无安装包）。沙盒环境下必须剥离钩子与代理变量：
    ```sh
    env -u CODEBUDDY_BROKERED_FS_HOOK_ENABLED -u NODE_OPTIONS -u BASH_ENV -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
      ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
      sh -c 'pnpm build && npx electron-builder && npx electron-builder --win --x64'
    ```
    产物在 `release/{version}/`：`CNB-Tools.dmg`、`CNB-Tools.exe`（artifactName = `${productName}.${ext}`，不含平台/版本，版本体现在目录与 Release/tag 上）。
-6. **创建/更新 Release 并上传**：
+7. **创建/更新 Release 并上传**：
    - 令牌从项目根目录 `.env.local` 读取（`GITHUB_TOKEN`），仓库地址读 `GITHUB_REPO`。**不要在命令行参数、日志或对话中明文输出令牌**；用 `export GH_TOKEN=$(grep '^GITHUB_TOKEN=' .env.local | cut -d= -f2)` 方式载入。
    - 用 GitHub API 创建 Release（`POST /repos/{repo}/releases`，tag_name 对应版本）。**Release name 只用版本号本身（如 `v1.0.1`），不带工具名称**；body 用中文写功能/修复摘要。
    - 逐个 `POST https://uploads.github.com/repos/{repo}/releases/{id}/assets?name=...` 上传产物（`Content-Type: application/octet-stream`，`--data-binary @文件`）。
    - **同版本 Release 已存在时**：更新它——复用已有 release id，删除同名旧资产后重新上传，并追加更新说明。
    - 上传后调 `GET /repos/{repo}/releases/latest` 比对资产 `size` 与本地字节数，必须完全一致才算成功。
-7. **收尾**：向用户报告 Release 链接（`https://github.com/{repo}/releases/tag/v{X.Y.Z}`）与资产清单；提醒可在 GitHub 设置中轮换令牌。
+8. **收尾**：向用户报告 Release 链接（`https://github.com/{repo}/releases/tag/v{X.Y.Z}`）与资产清单；提醒可在 GitHub 设置中轮换令牌。
 
 ### 令牌文件 `.env.local`
 
