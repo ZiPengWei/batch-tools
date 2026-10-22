@@ -68,3 +68,7 @@ coverage/
 # --- 其他可选 ---
 # package-lock.json 如果团队不允许锁定依赖可以放开（但通常建议提交）
 # package-lock.json 
+
+# --- Playwright 运行产物 ---
+test-results/
+playwright-report/
