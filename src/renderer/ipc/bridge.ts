@@ -88,3 +88,40 @@ export function onBatchMergeLog(callback: (e: BatchMergeLogEvent) => void) {
 export async function openExternal(url: string) {
   return invoke()("shell:open-external", url);
 }
+
+// ---------- 应用更新检查 ----------
+
+export interface UpdateStatus {
+  checking: boolean;
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+  releaseUrl: string;
+  error: string;
+}
+
+/** 当前应用版本号（主进程 app.getVersion()） */
+export async function getAppVersion(): Promise<string> {
+  return invoke()("cnb:app-version") as Promise<string>;
+}
+
+/** 主进程最近一次检查的更新状态（可能为 null：尚未检查过） */
+export async function getUpdateStatus(): Promise<UpdateStatus | null> {
+  return invoke()("cnb:get-update-status") as Promise<UpdateStatus | null>;
+}
+
+/** 主动触发一次更新检查（结果同样会通过 onUpdateStatus 推送） */
+export async function checkForUpdate(): Promise<UpdateStatus | null> {
+  return invoke()("cnb:check-update") as Promise<UpdateStatus | null>;
+}
+
+/** 订阅主进程的更新状态推送（自动检查/定时检查的结果） */
+export function onUpdateStatus(callback: (status: UpdateStatus) => void) {
+  const ipc = window.ipcRenderer;
+  if (!ipc?.on || !ipc?.off) return () => {};
+  const handler = (_event: any, payload: UpdateStatus) => callback(payload);
+  ipc.on("cnb:update-status", handler);
+  return () => {
+    ipc.off("cnb:update-status", handler);
+  };
+}

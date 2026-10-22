@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CnbClient } from "../src/main/services/cnbClient";
 import { MergeService } from "../src/main/services/mergeService";
+import {
+  RELEASES_PAGE_URL,
+  fetchLatestRelease,
+  isNewerVersion,
+} from "../src/main/services/updateChecker";
 import type {
   BatchMergeRequest,
   BatchMergeResponse,
@@ -69,6 +74,69 @@ ipcMain.handle("cnb:clear-auth", async () => {
   cnb.clearToken();
   cnb.setWebCookie("");
   return { ok: true };
+});
+
+// ---------- 应用更新检查（GitHub Release，提示但不强制更新） ----------
+
+export interface UpdateStatus {
+  checking: boolean;
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+  releaseUrl: string;
+  error: string;
+}
+
+let updateStatus: UpdateStatus | null = null;
+
+function pushUpdateStatus(status: UpdateStatus) {
+  updateStatus = status;
+  try {
+    win?.webContents?.send?.("cnb:update-status", status);
+  } catch {
+    /* 窗口可能尚未创建/已销毁，忽略 */
+  }
+}
+
+async function runUpdateCheck() {
+  const current = app.getVersion();
+  pushUpdateStatus({
+    checking: true,
+    current,
+    latest: updateStatus?.latest || "",
+    hasUpdate: updateStatus?.hasUpdate || false,
+    releaseUrl: updateStatus?.releaseUrl || RELEASES_PAGE_URL,
+    error: "",
+  });
+  try {
+    const rel = await fetchLatestRelease();
+    pushUpdateStatus({
+      checking: false,
+      current,
+      latest: rel.version,
+      hasUpdate: isNewerVersion(current, rel.version),
+      releaseUrl: rel.htmlUrl,
+      error: "",
+    });
+  } catch (err: any) {
+    pushUpdateStatus({
+      checking: false,
+      current,
+      latest: updateStatus?.latest || "",
+      hasUpdate: updateStatus?.hasUpdate || false,
+      releaseUrl: updateStatus?.releaseUrl || RELEASES_PAGE_URL,
+      error: err?.message ? `检查更新失败: ${err.message}` : "检查更新失败",
+    });
+  }
+}
+
+ipcMain.handle("cnb:app-version", () => app.getVersion());
+
+ipcMain.handle("cnb:get-update-status", () => updateStatus);
+
+ipcMain.handle("cnb:check-update", async () => {
+  await runUpdateCheck();
+  return updateStatus;
 });
 
 /**
@@ -246,7 +314,8 @@ ipcMain.handle(
     _event: IpcMainInvokeEvent,
     payload: { repo: string }
   ): Promise<ListBranchesResponse> => {
-    const branches = await cnb.getBranches(payload.repo);
+    // 分支按最新提交时间倒序（最近提交的在前），便于挑选活跃分支
+    const branches = await cnb.getBranchesSortedByCommitTime(payload.repo);
     const names = branches
       .map((b) => b.name)
       .filter((x): x is string => Boolean(x));
@@ -385,4 +454,10 @@ app.on("activate", () => {
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  // 自动检查更新：启动后延迟 3 秒（不阻塞启动），之后每 6 小时一次。
+  // 仅提示（渲染层角标/弹层），不自动下载、不强制更新。
+  setTimeout(() => void runUpdateCheck().catch(() => {}), 3000);
+  setInterval(() => void runUpdateCheck().catch(() => {}), 6 * 60 * 60 * 1000);
+});

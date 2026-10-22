@@ -334,6 +334,57 @@ export class CnbClient {
     return Array.from(uniqueByName.values());
   }
 
+  /** 从提交对象中提取提交时间（毫秒）；字段缺失或解析失败返回 0 */
+  private parseCommitTime(payload: any): number {
+    const raw =
+      payload?.commit?.committer?.date || payload?.commit?.author?.date || "";
+    const t = Date.parse(String(raw));
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  /**
+   * 获取全部分支，并按最新提交时间倒序排序（最近提交的分支在前）。
+   * 分支列表接口不含提交时间，需对每个分支请求一次提交列表（受控并发）；
+   * 单个分支的时间查询失败不阻塞整体，该分支按 0 时间排到末尾（组内保持原序）。
+   */
+  async getBranchesSortedByCommitTime(repo: string): Promise<CnbBranch[]> {
+    const branches = await this.getBranches(repo);
+    if (branches.length <= 1) return branches;
+
+    const repoPath = encodeRepoPath(repo);
+    const times = new Map<string, number>();
+    const CONCURRENCY = 6;
+    let cursor = 0;
+
+    const worker = async () => {
+      for (;;) {
+        const index = cursor++;
+        if (index >= branches.length) return;
+        const name = branches[index].name!;
+        try {
+          const res = await requestWithRetry(() =>
+            this.http.get<any[]>(`/${repoPath}/-/git/commits`, {
+              params: { sha: name, page: 1, page_size: 1 },
+            })
+          );
+          times.set(name, this.parseCommitTime(res.data?.[0]));
+        } catch {
+          times.set(name, 0);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, branches.length) }, worker)
+    );
+
+    // 稳定排序：时间相同的分支保持接口原序
+    return [...branches].sort((a, b) => {
+      const ta = times.get(a.name!) ?? 0;
+      const tb = times.get(b.name!) ?? 0;
+      return tb - ta;
+    });
+  }
+
   /**
    * 比较两个分支的差异，用于预检“无变更”（noop）。
    * 返回 { totalCommits }；接口失败时返回 null（不阻塞主流程）。

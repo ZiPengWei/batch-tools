@@ -94,6 +94,10 @@ vi.mock("../src/renderer/ipc/bridge", () => {
     listProjects: vi.fn(),
     listBranches: vi.fn(),
     openExternal: vi.fn(),
+    getAppVersion: vi.fn(async () => "1.0.0"),
+    getUpdateStatus: vi.fn(async () => null),
+    checkForUpdate: vi.fn(),
+    onUpdateStatus: vi.fn(() => () => {}),
   };
 });
 

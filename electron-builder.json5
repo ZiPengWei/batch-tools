@@ -12,7 +12,7 @@
   mac: {
     icon: "build/icon.icns",
     target: ["dmg"],
-    artifactName: "${productName}-Mac-${version}.${ext}",
+    artifactName: "${productName}-Mac.${ext}",
   },
   win: {
     icon: "build/icon.png",
@@ -25,10 +25,10 @@
     ],
   },
   portable: {
-    artifactName: "${productName}-Windows-${version}.${ext}",
+    artifactName: "${productName}-Windows.${ext}",
   },
   linux: {
     target: ["AppImage"],
-    artifactName: "${productName}-Linux-${version}.${ext}",
+    artifactName: "${productName}-Linux.${ext}",
   },
 }

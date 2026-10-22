@@ -15,8 +15,86 @@
               >
                 <n-card
                   :segmented="{ content: true }"
-                  title="CNB 认证"
                 >
+                  <template #header>
+                    <n-space align="center">
+                      CNB 认证
+                      <n-popover
+                        placement="bottom-end"
+                        trigger="click"
+                      >
+                        <template #trigger>
+                          <n-badge
+                            dot
+                            :show="hasUpdate"
+                          >
+                            <n-button
+                              text
+                              type="primary"
+                            >
+                              v{{ currentVersion || '?' }}
+                            </n-button>
+                          </n-badge>
+                        </template>
+                        <n-space vertical>
+                          <n-text :style="styles.caption">
+                            当前版本 v{{ currentVersion || '?' }}
+                          </n-text>
+                          <n-space
+                            v-if="updateChecking"
+                            align="center"
+                          >
+                            <n-spin :style="styles.inlineSpinner" />
+                            <n-text
+                              depth="3"
+                              :style="styles.caption"
+                            >
+                              正在检查更新...
+                            </n-text>
+                          </n-space>
+                          <template v-else-if="hasUpdate">
+                            <n-text type="warning">
+                              发现新版本 v{{ latestVersion }}
+                            </n-text>
+                            <n-button
+                              type="primary"
+                              @click="openReleasePage"
+                            >
+                              前往下载
+                            </n-button>
+                          </template>
+                          <template v-else-if="updateError">
+                            <n-text
+                              depth="3"
+                              :style="styles.caption"
+                            >
+                              {{ updateError }}
+                            </n-text>
+                            <n-button
+                              secondary
+                              @click="runCheckUpdate"
+                            >
+                              重试
+                            </n-button>
+                          </template>
+                          <n-text
+                            v-else
+                            depth="3"
+                            :style="styles.caption"
+                          >
+                            已是最新版本
+                          </n-text>
+                          <n-button
+                            :disabled="updateChecking"
+                            text
+                            @click="runCheckUpdate"
+                          >
+                            检查更新
+                          </n-button>
+                        </n-space>
+                      </n-popover>
+                    </n-space>
+                  </template>
                   <template #header-extra>
                     <n-space align="center">
                       <n-tag
@@ -481,11 +559,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAuthStore } from './renderer/store/auth'
 import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
 import BatchMergeFlowDialog, { type BatchMergeFlowDialogExposed } from './renderer/components/BatchMergeFlowDialog.vue'
+import {
+  checkForUpdate,
+  getAppVersion,
+  getUpdateStatus,
+  onUpdateStatus,
+  openExternal,
+  type UpdateStatus,
+} from './renderer/ipc/bridge'
 import {
   NButton,
   NCheckbox,
@@ -507,6 +593,8 @@ import {
   NCollapseTransition,
   NRadioGroup,
   NRadioButton,
+  NBadge,
+  NPopover,
   useThemeVars,
 } from './renderer/ui/naive'
 
@@ -768,6 +856,42 @@ const isAuthExpanded = ref(true)
 /** 认证卡展示的登录方式（网页登录/令牌），仅控制面板显示，不影响已连接状态；默认网页登录 */
 const authTab = ref<'login' | 'token'>('login')
 
+// ---------- 应用更新检查（主进程自动检查，渲染层仅展示，不强制更新） ----------
+const currentVersion = ref('')
+const latestVersion = ref('')
+const hasUpdate = ref(false)
+const updateChecking = ref(false)
+const updateError = ref('')
+const releaseUrl = ref('https://github.com/ZiPengWei/batch-tools/releases/latest')
+
+function applyUpdateStatus(s: UpdateStatus | null | undefined) {
+  if (!s) return
+  updateChecking.value = !!s.checking
+  if (s.current) currentVersion.value = s.current
+  if (s.latest) latestVersion.value = s.latest
+  hasUpdate.value = !!s.hasUpdate
+  if (s.releaseUrl) releaseUrl.value = s.releaseUrl
+  updateError.value = s.error || ''
+}
+
+async function runCheckUpdate() {
+  if (updateChecking.value) return
+  updateChecking.value = true
+  try {
+    applyUpdateStatus(await checkForUpdate())
+  } catch {
+    updateChecking.value = false
+    updateError.value = '检查更新失败'
+  }
+}
+
+function openReleasePage() {
+  if (!releaseUrl.value) return
+  void openExternal(releaseUrl.value)
+}
+
+let offUpdateStatus: (() => void) | null = null
+
 function scrollEventTargetIntoView(e: MouseEvent) {
   const el = e.currentTarget as HTMLElement | null
   if (!el) return
@@ -826,10 +950,28 @@ watch(
   { deep: true },
 )
 
-onMounted(() => {
+onMounted(async () => {
   auth.loadLocal()
   // 默认展示"网页登录"；原本已用令牌连接（有用户信息）时才默认展示令牌面板
   if (auth.connected && auth.mode === 'token') authTab.value = 'token'
+
+  // 更新检查：订阅主进程推送 + 恢复已缓存的检查结果（主进程启动 3 秒后会自动检查）
+  try {
+    currentVersion.value = await getAppVersion()
+  } catch {
+    /* 非 Electron 环境下跳过 */
+  }
+  offUpdateStatus = onUpdateStatus(applyUpdateStatus)
+  try {
+    applyUpdateStatus(await getUpdateStatus())
+  } catch {
+    /* ignore */
+  }
+})
+
+onUnmounted(() => {
+  offUpdateStatus?.()
+  offUpdateStatus = null
 })
 </script>
 
