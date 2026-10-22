@@ -33,6 +33,14 @@
                       >
                         未连接
                       </n-tag>
+                      <n-radio-group v-model:value="authTab">
+                        <n-radio-button value="login">
+                          网页登录
+                        </n-radio-button>
+                        <n-radio-button value="token">
+                          访问令牌
+                        </n-radio-button>
+                      </n-radio-group>
                       <n-button
                         text
                         type="primary"
@@ -47,67 +55,92 @@
                       :style="styles.authPanel"
                       vertical
                     >
-                      <n-grid
-                        :cols="24"
-                        :x-gap="24"
+                      <template v-if="authTab === 'token'">
+                        <n-grid
+                          :cols="24"
+                          :x-gap="24"
+                        >
+                          <n-grid-item :span="12">
+                            <n-space vertical>
+                              <n-text
+                                depth="3"
+                                :style="styles.caption"
+                              >
+                                CNB API 地址
+                              </n-text>
+                              <n-input
+                                v-model:value="auth.baseUrl"
+                                placeholder="https://api.cnb.cool"
+                              />
+                            </n-space>
+                          </n-grid-item>
+                          <n-grid-item :span="12">
+                            <n-space vertical>
+                              <n-text
+                                depth="3"
+                                :style="styles.caption"
+                              >
+                                访问令牌 (Access Token)
+                              </n-text>
+                              <n-input
+                                v-model:value="auth.token"
+                                placeholder="在 cnb.cool 个人设置中创建访问令牌"
+                                show-password-on="click"
+                                type="password"
+                              />
+                            </n-space>
+                          </n-grid-item>
+                        </n-grid>
+                        <n-space align="center">
+                          <n-button
+                            :disabled="auth.loggingIn || auth.busy"
+                            :loading="auth.busy"
+                            @click="auth.connect()"
+                          >
+                            {{ auth.busy ? '验证中...' : '使用令牌连接' }}
+                          </n-button>
+                          <n-checkbox v-model:checked="auth.rememberToken">
+                            记住令牌（仅本机保存，网页登录不受此项影响）
+                          </n-checkbox>
+                        </n-space>
+                      </template>
+                      <template v-else>
+                        <n-space align="center">
+                          <n-button
+                            :disabled="auth.loggingIn || auth.busy"
+                            :loading="auth.loggingIn"
+                            type="primary"
+                            @click="auth.connected ? auth.switchAccount() : auth.loginViaWeb()"
+                          >
+                            {{
+                              auth.loggingIn
+                                ? '等待登录...'
+                                : auth.connected
+                                  ? '切换账号'
+                                  : '网页账号登录（推荐）'
+                            }}
+                          </n-button>
+                        </n-space>
+                        <n-text
+                          depth="3"
+                          :style="styles.caption"
+                        >
+                          网页账号登录：弹出 CNB 登录窗口，无需创建令牌；登录状态自动保存，并支持仓库置顶双向同步。
+                        </n-text>
+                      </template>
+                      <n-space
+                        v-if="auth.connected"
+                        align="center"
                       >
-                        <n-grid-item :span="12">
-                          <n-space vertical>
-                            <n-text
-                              depth="3"
-                              :style="styles.caption"
-                            >
-                              CNB API 地址
-                            </n-text>
-                            <n-input
-                              v-model:value="auth.baseUrl"
-                              placeholder="https://api.cnb.cool"
-                            />
-                          </n-space>
-                        </n-grid-item>
-                        <n-grid-item :span="12">
-                          <n-space vertical>
-                            <n-text
-                              depth="3"
-                              :style="styles.caption"
-                            >
-                              访问令牌 (Access Token)
-                            </n-text>
-                            <n-input
-                              v-model:value="auth.token"
-                              placeholder="在 cnb.cool 个人设置中创建访问令牌"
-                              show-password-on="click"
-                              type="password"
-                            />
-                          </n-space>
-                        </n-grid-item>
-                      </n-grid>
-                      <n-space align="center">
                         <n-button
                           :disabled="auth.loggingIn || auth.busy"
-                          :loading="auth.loggingIn"
-                          type="primary"
-                          @click="auth.loginViaWeb()"
+                          quaternary
+                          type="error"
+                          @click="auth.logout()"
                         >
-                          {{ auth.loggingIn ? '等待登录...' : '网页账号登录（推荐）' }}
+                          退出登录
                         </n-button>
-                        <n-button
-                          :disabled="auth.busy"
-                          :loading="auth.busy"
-                          @click="auth.connect()"
-                        >
-                          {{ auth.busy ? '验证中...' : '使用令牌连接' }}
-                        </n-button>
-                        <n-checkbox v-model:checked="auth.rememberToken">
-                          保存登录状态
-                        </n-checkbox>
                       </n-space>
-                      <n-text
-                        depth="3"
-                        :style="styles.caption"
-                      >
-                        网页账号登录：弹出 CNB 登录窗口，无需创建令牌，并支持仓库置顶双向同步；令牌方式为兼容备选。
-                      </n-text>
                       <n-text
                         v-if="auth.connected && projects.loading"
                         depth="3"
@@ -472,6 +505,8 @@ import {
   NSpace,
   NTag,
   NCollapseTransition,
+  NRadioGroup,
+  NRadioButton,
   useThemeVars,
 } from './renderer/ui/naive'
 
@@ -730,6 +765,8 @@ const mergeButtonText = computed(() => {
 
 const batchMergeFlowDialogRef = ref<BatchMergeFlowDialogExposed | null>(null)
 const isAuthExpanded = ref(true)
+/** 认证卡展示的登录方式（网页登录/令牌），仅控制面板显示，不影响已连接状态；默认网页登录 */
+const authTab = ref<'login' | 'token'>('login')
 
 function scrollEventTargetIntoView(e: MouseEvent) {
   const el = e.currentTarget as HTMLElement | null
@@ -766,6 +803,14 @@ watch(
   { immediate: true }
 )
 
+// 认证出错（含切换账号失败）时自动展开认证面板，避免错误提示被折叠看不见
+watch(
+  () => auth.error,
+  (val) => {
+    if (val) isAuthExpanded.value = true
+  }
+)
+
 function onClickBatch() {
   if (!projects.selectedRepo) return
   if (!projects.selectedSourceBranch) return
@@ -783,6 +828,8 @@ watch(
 
 onMounted(() => {
   auth.loadLocal()
+  // 默认展示"网页登录"；原本已用令牌连接（有用户信息）时才默认展示令牌面板
+  if (auth.connected && auth.mode === 'token') authTab.value = 'token'
 })
 </script>
 

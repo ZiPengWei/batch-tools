@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, screen, session, shell } from "electron";
-import type { IpcMainInvokeEvent } from "electron";
+import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CnbClient } from "../src/main/services/cnbClient";
@@ -34,7 +34,6 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST;
 
 let win: BrowserWindow | null;
-let screenListenersAttached = false;
 
 const cnb = new CnbClient();
 const mergeService = new MergeService(cnb);
@@ -65,6 +64,13 @@ ipcMain.handle(
   }
 );
 
+/** 退出登录：清空主进程持有的令牌与网页会话 Cookie。 */
+ipcMain.handle("cnb:clear-auth", async () => {
+  cnb.clearToken();
+  cnb.setWebCookie("");
+  return { ok: true };
+});
+
 /**
  * 打开内嵌网页登录窗口：用户在窗口内正常登录 CNB（密码/扫码/passkey），
  * 登录成功后自动抓取会话 Cookie 返回给渲染层持久化。
@@ -72,21 +78,47 @@ ipcMain.handle(
  */
 let loginWin: BrowserWindow | null = null;
 
-ipcMain.handle("cnb:web-login", async () => {
-  if (loginWin) {
-    loginWin.focus();
-    return { ok: false, error: "登录窗口已打开，请完成登录" };
-  }
-  const ses = session.fromPartition("persist:cnb-web-login");
-  return await new Promise<any>((resolve) => {
+ipcMain.handle(
+  "cnb:web-login",
+  async (_event: IpcMainInvokeEvent, payload?: { forceFresh?: boolean }) => {
+    if (loginWin) {
+      loginWin.focus();
+      return { ok: false, error: "登录窗口已打开，请完成登录" };
+    }
+    const ses = session.fromPartition("persist:cnb-web-login");
+    // 切换账号：清空持久化网页会话（Cookie/本地存储等），确保弹出全新登录页
+    if (payload?.forceFresh) {
+      try {
+        await ses.clearStorageData({
+          storages: [
+            "cookies",
+            "localstorage",
+            "indexdb",
+            "serviceworkers",
+            "cachestorage",
+          ],
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    return await new Promise<any>((resolve) => {
     let settled = false;
     const win = new BrowserWindow({
       width: 1024,
       height: 760,
       title: "登录 CNB",
       autoHideMenuBar: true,
+      // 页面渲染完成后再显示，避免打开登录窗时白屏
+      show: false,
+      backgroundColor: "#ffffff",
       webPreferences: { session: ses, contextIsolation: true },
     });
+    win.once("ready-to-show", () => win.show());
+    // 兜底：远程页面加载异常时也要保证窗口可见
+    setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) win.show();
+    }, 5000);
     loginWin = win;
 
     const settle = (result: any) => {
@@ -124,7 +156,49 @@ ipcMain.handle("cnb:web-login", async () => {
       if (!settled) settle({ ok: false, error: "登录窗口已关闭" });
     });
 
-    void win.loadURL("https://cnb.cool/login");
+    // 主页加载完成后自动点击「微信登录 / WeChat Login」按钮，直接弹出登录框
+    // （CNB 无独立登录页，/login 会 404；登录框是主页上的模态框）
+    const autoOpenWechatLogin = async () => {
+      for (let i = 0; i < 20; i++) {
+        try {
+          const clicked = await win.webContents.executeJavaScript(
+            `(() => {
+              const keys = ['微信登录', '微信登陆', 'wechat login'];
+              const els = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+              const btn = els.find((el) => {
+                const t = (el.textContent || '').trim().toLowerCase();
+                if (!t || t.length > 30) return false;
+                return keys.some((k) => t === k || t.includes(k));
+              });
+              if (btn) { btn.click(); return true; }
+              return false;
+            })()`,
+            true
+          );
+          if (clicked) return;
+        } catch {
+          /* ignore, 等待下一轮 */
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    };
+    win.webContents.on("did-finish-load", () => {
+      const url = win.webContents.getURL();
+      // 仅在中文主页（登录入口所在页）自动点击，登录后的跳转不处理
+      try {
+        const u = new URL(url);
+        if (
+          u.hostname === "cnb.cool" &&
+          (u.pathname === "/" || u.pathname === "")
+        ) {
+          void autoOpenWechatLogin();
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+
+    void win.loadURL("https://cnb.cool/?lang=zh-CN");
   });
 });
 
@@ -232,29 +306,22 @@ function computeInitialWindowBounds() {
   width = clamp(width, minWidth, maxWidth);
   height = clamp(height, minHeight, maxHeight);
 
-  return { width, height, minWidth, minHeight, maxWidth, maxHeight };
+  return { width, height, minWidth, minHeight };
 }
 
-function clampWindowToWorkArea() {
-  if (!win) return;
-  if (win.isDestroyed()) return;
-  if (win.isMaximized() || win.isFullScreen()) return;
-
-  const bounds = win.getBounds();
-  const display = screen.getDisplayMatching(bounds);
-  const wa = display.workArea;
-
-  const [minW, minH] = win.getMinimumSize();
-  const maxW = Math.max(minW, wa.width);
-  const maxH = Math.max(minH, wa.height);
-
-  const width = clamp(bounds.width, minW, maxW);
-  const height = clamp(bounds.height, minH, maxH);
-  const x = clamp(bounds.x, wa.x, wa.x + wa.width - width);
-  const y = clamp(bounds.y, wa.y, wa.y + wa.height - height);
-
-  win.setBounds({ x, y, width, height });
-  win.setMaximumSize(maxW, maxH);
+/**
+ * 固定页面缩放 100%：
+ * - 禁用触控板捏合缩放（setVisualZoomLevelLimits）
+ * - Ctrl+滚轮触发的 zoom-changed 一律重置回 1
+ * 应用无菜单栏，用户误触缩放后没有任何恢复入口，故直接固定。
+ */
+function pinZoomLevel(wc: WebContents) {
+  wc.setVisualZoomLevelLimits(1, 1).catch(() => {
+    /* 旧版本 API 可能不存在，忽略 */
+  });
+  wc.on("zoom-changed", () => {
+    wc.setZoomFactor(1);
+  });
 }
 
 function createWindow() {
@@ -266,24 +333,26 @@ function createWindow() {
     height: initial.height,
     minWidth: initial.minWidth,
     minHeight: initial.minHeight,
-    maxWidth: initial.maxWidth,
-    maxHeight: initial.maxHeight,
+    // 先隐藏窗口，页面首次渲染完成后再显示，避免启动白屏
+    show: false,
+    backgroundColor: "#ffffff",
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
     },
   });
 
-  win.center();
-  win.setMaximumSize(initial.maxWidth, initial.maxHeight);
-  win.on("move", clampWindowToWorkArea);
-  win.on("resize", clampWindowToWorkArea);
+  win.once("ready-to-show", () => {
+    win?.show();
+  });
+  // 兜底：极端情况下 ready-to-show 不触发，3 秒后强制显示
+  setTimeout(() => {
+    if (win && !win.isDestroyed() && !win.isVisible()) win.show();
+  }, 3000);
 
-  if (!screenListenersAttached) {
-    screen.on("display-added", clampWindowToWorkArea);
-    screen.on("display-removed", clampWindowToWorkArea);
-    screen.on("display-metrics-changed", clampWindowToWorkArea);
-    screenListenersAttached = true;
-  }
+  win.center();
+
+  // 固定页面缩放 100%（防误触 Ctrl+滚轮 / 触控板捏合）
+  pinZoomLevel(win.webContents);
 
   // Test active push message to Renderer-process.
   win.webContents.on("did-finish-load", () => {

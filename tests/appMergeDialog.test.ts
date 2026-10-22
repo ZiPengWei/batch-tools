@@ -15,6 +15,8 @@ const authStoreMock = {
   loadLocal: vi.fn(),
   connect: vi.fn(),
   loginViaWeb: vi.fn(),
+  switchAccount: vi.fn(),
+  logout: vi.fn(),
 };
 
 const projectsStoreMock = reactive({
@@ -86,6 +88,7 @@ vi.mock("../src/renderer/ipc/bridge", () => {
     onBatchMergeLog: vi.fn(() => () => {}),
     batchMerge: vi.fn(),
     setAuth: vi.fn(),
+    clearAuth: vi.fn(),
     setRepoPinned: vi.fn(),
     webLogin: vi.fn(),
     listProjects: vi.fn(),
@@ -405,11 +408,22 @@ describe("App 合并弹窗日志", () => {
       const wrapper = mount(App, { attachTo: document.body });
       await nextTick();
 
-      const text = wrapper.text();
+      // 默认展示"网页登录"面板
+      let text = wrapper.text();
       expect(text).toContain("CNB 认证");
+      expect(text).toContain("网页账号登录（推荐）");
+      expect(text).toContain("1. 选择仓库");
+
+      // 切换到"访问令牌"后展示令牌输入面板
+      const tokenRadio = wrapper
+        .findAll('input[type="radio"]')
+        .find((i) => (i.element as HTMLInputElement).value === "token");
+      expect(tokenRadio).toBeTruthy();
+      await tokenRadio!.setValue();
+      await nextTick();
+      text = wrapper.text();
       expect(text).toContain("CNB API 地址");
       expect(text).toContain("访问令牌 (Access Token)");
-      expect(text).toContain("1. 选择仓库");
 
       wrapper.unmount();
     } finally {

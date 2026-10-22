@@ -1,5 +1,5 @@
 import { acceptHMRUpdate, defineStore } from 'pinia'
-import { setAuth, webLogin } from '../ipc/bridge'
+import { clearAuth, setAuth, webLogin } from '../ipc/bridge'
 import { useProjectsStore } from './projects'
 
 const isE2E =
@@ -46,6 +46,21 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     saveLocal() {
+      // 网页登录（Cookie 模式）始终记住会话，不受"保存登录状态"控制；
+      // "保存登录状态"仅对访问令牌生效。
+      if (this.mode === 'cookie') {
+        localStorage.setItem(
+          CNB_AUTH_STORAGE_KEY,
+          JSON.stringify({
+            baseUrl: this.baseUrl,
+            token: '',
+            webCookie: this.webCookie,
+            mode: this.mode,
+            rememberToken: this.rememberToken,
+          }),
+        )
+        return
+      }
       if (!this.rememberToken) {
         localStorage.removeItem(CNB_AUTH_STORAGE_KEY)
         return
@@ -62,11 +77,11 @@ export const useAuthStore = defineStore('auth', {
       )
     },
     /** 应用内网页登录：弹出 CNB 登录窗口，成功后以 Cookie 模式连接（无需令牌） */
-    async loginViaWeb() {
+    async loginViaWeb(forceFresh = false) {
       this.error = ''
       this.loggingIn = true
       try {
-        const res = await webLogin()
+        const res = await webLogin({ forceFresh })
         if (!res.ok) {
           if (res.error !== '登录窗口已关闭') this.error = res.error
           return false
@@ -98,6 +113,35 @@ export const useAuthStore = defineStore('auth', {
         return false
       } finally {
         this.loggingIn = false
+      }
+    },
+    /**
+     * 切换账号：弹出全新登录窗口（清空网页会话，不会自动复用上一次登录的账号）。
+     * 切换期间保持当前账号状态不变；登录成功后才更新为新账号，
+     * 关闭登录窗（取消）或登录失败则维持原状。
+     */
+    async switchAccount() {
+      this.error = ''
+      return this.loginViaWeb(true)
+    },
+    /**
+     * 退出登录：清空本地持久化凭证与主进程认证，回到未连接状态。
+     * 不清除 CNB 网页会话本身（partition），下次网页登录可能一键恢复，
+     * 需彻底换号请使用"切换账号"（强制全新登录）。
+     */
+    async logout() {
+      this.connected = false
+      this.userName = ''
+      this.error = ''
+      this.token = ''
+      this.webCookie = ''
+      this.mode = 'token'
+      this.rememberToken = false
+      localStorage.removeItem(CNB_AUTH_STORAGE_KEY)
+      try {
+        await clearAuth()
+      } catch {
+        /* 主进程清理失败不阻塞本地退出 */
       }
     },
     async connect() {

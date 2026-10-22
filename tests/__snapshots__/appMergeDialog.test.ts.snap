@@ -20,6 +20,17 @@ exports[`组件快照 > App 初始渲染快照 1`] = `
                   <div class="n-tag__border"></div>
                 </div>
               </div>
+              <div role="none" style="max-width: 100%; margin-right: 12px; padding-top: 4px; padding-bottom: 4px;">
+                <div data-v-7a7a37b1="" class="n-radio-group n-radio-group--button-group" style="--n-font-size: 14px; --n-bezier: cubic-bezier(.4, 0, .2, 1); --n-button-border-color: rgb(224, 224, 230); --n-button-border-color-active: #18a058; --n-button-border-radius: 3px; --n-button-box-shadow: inset 0 0 0 1px #0000; --n-button-box-shadow-focus: inset 0 0 0 1px #18a058, 0 0 0 2px rgba(24, 160, 88, 0.3); --n-button-box-shadow-hover: inset 0 0 0 1px #0000; --n-button-color: #FFF; --n-button-color-active: #FFF; --n-button-text-color: rgb(51, 54, 57); --n-button-text-color-hover: #18a058; --n-button-text-color-active: #18a058; --n-height: 34px; --n-opacity-disabled: 0.5;"><label data-v-7a7a37b1="" class="n-radio-button"><input type="radio" class="n-radio-input" value="login">
+                    <div class="n-radio-button__state-border"></div>
+                    <div class="n-radio__label"> 网页登录 </div>
+                  </label>
+                  <div class="n-radio-group__splitor n-radio-group__splitor--checked"></div><label data-v-7a7a37b1="" class="n-radio-button n-radio-button--checked"><input type="radio" class="n-radio-input" value="token" checked="">
+                    <div class="n-radio-button__state-border"></div>
+                    <div class="n-radio__label"> 访问令牌 </div>
+                  </label>
+                </div>
+              </div>
               <div role="none" style="max-width: 100%; padding-top: 4px; padding-bottom: 4px;"><button data-v-7a7a37b1="" class="n-button n-button--primary-type n-button--medium-type" tabindex="0" type="button" style="--n-bezier: cubic-bezier(.4, 0, .2, 1); --n-bezier-ease-out: cubic-bezier(0, 0, .2, 1); --n-ripple-duration: .6s; --n-opacity-disabled: 0.5; --n-wave-opacity: 0.6; --n-font-weight: 400; --n-color: #0000; --n-color-hover: #0000; --n-color-pressed: #0000; --n-color-focus: #0000; --n-color-disabled: #0000; --n-ripple-color: #0000; --n-text-color: #18a058; --n-text-color-hover: #36ad6a; --n-text-color-pressed: #0c7a43; --n-text-color-focus: #36ad6a; --n-text-color-disabled: rgb(51, 54, 57); --n-border: none; --n-border-hover: none; --n-border-pressed: none; --n-border-focus: none; --n-border-disabled: none; --n-width: initial; --n-height: initial; --n-font-size: 14px; --n-padding: initial; --n-icon-size: 18px; --n-icon-margin: 6px; --n-border-radius: initial;">
                   <!---->
                   <transition-stub name="fade-in-width-expand-transition" appear="false" persisted="false" css="true">

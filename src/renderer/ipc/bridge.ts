@@ -27,14 +27,20 @@ export async function setAuth(payload: {
   return invoke()("cnb:set-auth", payload) as Promise<any>;
 }
 
+/** 清空主进程持有的认证凭证（令牌与网页 Cookie），用于退出登录。 */
+export async function clearAuth() {
+  return invoke()("cnb:clear-auth");
+}
+
 /**
  * 打开内嵌网页登录窗口，用户登录 CNB 后自动返回会话 Cookie。
+ * forceFresh=true 时清空持久化网页会话，强制全新登录（用于切换账号）。
  */
-export async function webLogin(): Promise<
+export async function webLogin(opts?: { forceFresh?: boolean }): Promise<
   | { ok: true; cookie: string; user?: { name?: string; username?: string; nickname?: string } }
   | { ok: false; error: string }
 > {
-  return invoke()("cnb:web-login");
+  return invoke()("cnb:web-login", opts);
 }
 
 /**

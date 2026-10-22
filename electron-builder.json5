@@ -12,23 +12,20 @@
   mac: {
     icon: "build/icon.icns",
     target: ["dmg"],
-    artifactName: "${productName}-Mac-${version}-Installer.${ext}",
+    artifactName: "${productName}-Mac-${version}.${ext}",
   },
   win: {
     icon: "build/icon.png",
     target: [
       {
-        target: "nsis",
+        // 免安装便携版：单文件 exe，双击直接运行
+        target: "portable",
         arch: ["x64"],
       },
     ],
-    artifactName: "${productName}-Windows-${version}-Setup.${ext}",
   },
-  nsis: {
-    oneClick: false,
-    perMachine: false,
-    allowToChangeInstallationDirectory: true,
-    deleteAppDataOnUninstall: false,
+  portable: {
+    artifactName: "${productName}-Windows-${version}.${ext}",
   },
   linux: {
     target: ["AppImage"],
