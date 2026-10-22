@@ -95,6 +95,38 @@
   - `src/renderer/store/merge.ts`
 - 当 `VITE_E2E=1` 或 `MODE=e2e` 时，这些 store 会用可预测的假数据和进度日志替代真实的认证 / 仓库 / 分支 / 合并行为。修改 store 逻辑时必须保留这些分支，否则 Playwright 覆盖会失效。
 
+## 发版流程（触发词："发版"）
+
+当用户说"发版"（可附带版本号，如"发版 1.1.0"；未附带时默认递增 patch 位）时，按以下顺序执行：
+
+1. **前置检查**：
+   - `git status` 确认工作区干净；有未提交改动则先按惯例提交（fix 分支）。
+   - `pnpm check`（typecheck + 全部测试）必须全绿，失败则中止发版并报告。
+2. **递进版本号**：修改 `package.json` 的 `version`（唯一版本来源），提交（`chore: release v{X.Y.Z}`）。
+3. **同步远程**：`git push origin fix` → `git checkout master && git merge fix --ff-only && git push origin master && git checkout fix`。
+4. **打 tag**：annotated 标签 `v{X.Y.Z}`（附中文版本说明，列出主要功能与修复），`git push origin v{X.Y.Z}`。**若 tag 已存在，中止并询问用户，不得覆盖**。
+5. **打包**：完整构建 mac dmg 与 Windows 便携 exe（单文件，无安装包）。沙盒环境下必须剥离钩子与代理变量：
+   ```sh
+   env -u CODEBUDDY_BROKERED_FS_HOOK_ENABLED -u NODE_OPTIONS -u BASH_ENV -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
+     ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+     sh -c 'pnpm build && npx electron-builder && npx electron-builder --win --x64'
+   ```
+   产物在 `release/{version}/`：`CNB-Tools-Mac-{version}.dmg`、`CNB-Tools-Windows-{version}.exe`。
+6. **创建/更新 Release 并上传**：
+   - 令牌从项目根目录 `.env.local` 读取（`GITHUB_TOKEN`），仓库地址读 `GITHUB_REPO`。**不要在命令行参数、日志或对话中明文输出令牌**；用 `export GH_TOKEN=$(grep '^GITHUB_TOKEN=' .env.local | cut -d= -f2)` 方式载入。
+   - 用 GitHub API 创建 Release（`POST /repos/{repo}/releases`，tag_name 对应版本，name 与 body 用中文写功能/修复摘要）。
+   - 逐个 `POST https://uploads.github.com/repos/{repo}/releases/{id}/assets?name=...` 上传产物（`Content-Type: application/octet-stream`，`--data-binary @文件`）。
+   - **同版本 Release 已存在时**：更新它——复用已有 release id，删除同名旧资产后重新上传，并追加更新说明。
+   - 上传后调 `GET /repos/{repo}/releases/latest` 比对资产 `size` 与本地字节数，必须完全一致才算成功。
+7. **收尾**：向用户报告 Release 链接（`https://github.com/{repo}/releases/tag/v{X.Y.Z}`）与资产清单；提醒可在 GitHub 设置中轮换令牌。
+
+### 令牌文件 `.env.local`
+
+- 位置：项目根目录 `.env.local`，**已被 `.gitignore` 忽略，严禁提交、严禁粘贴到对话或复制到其他文件**。
+- 内容：`GITHUB_TOKEN=<GitHub fine-grained PAT>`（需 Contents 读写权限）、`GITHUB_REPO=<owner/repo>`。
+- 令牌失效（API 返回 401/403）时，提示用户到 GitHub → Settings → Developer settings → Fine-grained tokens 重新生成并更新该文件，不要把新令牌写进代码或提交。
+- 新同事/新环境：复制本文件格式自行创建，该文件不入库。
+
 ## 需要保留的仓库约定
 
 - 该包使用 ESM（`"type": "module"`）。需要 CommonJS 的配置文件应保持 `.cjs` 形式，例如 `.eslintrc.cjs`。
