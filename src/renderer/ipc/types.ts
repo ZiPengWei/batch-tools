@@ -1,17 +1,17 @@
 import type { MergePair, MergeResult } from "../../main/services/mergeTypes";
-import type { GitLabProject } from "../../shared/gitlab/types";
 
 export type AuthState = {
   baseUrl: string;
   token: string;
   rememberToken: boolean;
   connected: boolean;
-  user?: { name?: string; username?: string };
+  user?: { name?: string; username?: string; nickname?: string };
   error?: string;
 };
 
 export type ListProjectsItem = {
-  id: number;
+  /** CNB 仓库完整路径，如 org/repo */
+  id: string;
   display: string;
   search: string;
   pinyinFull: string;
@@ -27,7 +27,8 @@ export type ListBranchesResponse = {
 };
 
 export type BatchMergeRequest = {
-  projectId: number;
+  /** CNB 仓库完整路径，如 org/repo */
+  repo: string;
   pairs: MergePair[];
   runId?: string;
 };
@@ -39,5 +40,3 @@ export type BatchMergeLogEvent = {
   text: string;
   error?: boolean;
 };
-
-export type GitLabRawProject = GitLabProject;

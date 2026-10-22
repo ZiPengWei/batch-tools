@@ -1,5 +1,5 @@
 {
-  "name": "gitlab-batch-merge-tool",
+  "name": "cnb-batch-merge-tool",
   "private": true,
   "version": "2.0.1",
   "type": "module",

@@ -14,7 +14,8 @@ export const useProjectsStore = defineStore("projects", {
 
     filter: "",
 
-    selectedProjectId: 0,
+    /** 当前选中的仓库完整路径（org/repo） */
+    selectedRepo: "",
     selectedProjectName: "",
 
     sourceBranches: [] as string[],
@@ -42,7 +43,7 @@ export const useProjectsStore = defineStore("projects", {
       this.loading = false;
       this.error = "";
       this.filter = "";
-      this.selectedProjectId = 0;
+      this.selectedRepo = "";
       this.selectedProjectName = "";
       this.sourceBranches = [];
       this.sourceBranchesLoading = false;
@@ -63,15 +64,15 @@ export const useProjectsStore = defineStore("projects", {
           const items = Array.from({ length: 1200 }, (_, i) => {
             const id = i + 1;
             return {
-              id,
-              display: `P${id}`,
-              search: `p${id}`,
+              id: `demo/p${id}`,
+              display: `demo/p${id}`,
+              search: `demo/p${id}`,
               pinyinFull: "",
               pinyinInitials: "",
             } satisfies ListProjectsItem;
           });
           this.items = items;
-          if (!this.selectedProjectId) {
+          if (!this.selectedRepo) {
             await this.selectProject({ id: items[0].id, display: items[0].display });
           }
           return;
@@ -80,13 +81,13 @@ export const useProjectsStore = defineStore("projects", {
         this.items = res.items || [];
       } catch (e) {
         const msg = String(e);
-        this.error = msg ? `项目列表刷新失败：${msg}` : "项目列表刷新失败";
+        this.error = msg ? `仓库列表刷新失败：${msg}` : "仓库列表刷新失败";
       } finally {
         this.loading = false;
       }
     },
-    async selectProject(p: { id: number; display: string }) {
-      this.selectedProjectId = p.id;
+    async selectProject(p: { id: string; display: string }) {
+      this.selectedRepo = p.id;
       this.selectedProjectName = p.display;
       this.selectedSourceBranch = "";
       this.sourceBranches = [];
@@ -94,7 +95,7 @@ export const useProjectsStore = defineStore("projects", {
       await this.loadAllBranches();
     },
     async loadAllBranches() {
-      if (!this.selectedProjectId) return;
+      if (!this.selectedRepo) return;
       this.sourceBranchesLoading = true;
       this.sourceBranchesError = "";
       this.targetBranchesLoading = true;
@@ -111,7 +112,7 @@ export const useProjectsStore = defineStore("projects", {
           if (!this.selectedSourceBranch) this.selectedSourceBranch = list[0] || "";
           return;
         }
-        const res = await listBranches({ projectId: this.selectedProjectId });
+        const res = await listBranches({ repo: this.selectedRepo });
         const list = res.branches || [];
         this.sourceBranches = list;
         this.targetBranches = list;

@@ -1,21 +1,23 @@
-import type { GitLabClient } from "./gitlabClient";
-import type { ConflictHandler, MergePair, MergeResult } from "./mergeTypes";
-import { runAtomicBatchMergeByMerge } from "./mergeStrategies/merge";
+import type { CnbClient } from "./cnbClient";
+import type { MergePair, MergeResult } from "./mergeTypes";
+import { runBatchMerge } from "./mergeStrategies/merge";
 
 export class MergeService {
-  constructor(private client: GitLabClient) {}
+  constructor(private client: CnbClient) {}
 
-  async runAtomicBatchMerge(
-    projectId: number,
+  /**
+   * 批量合并：每个目标分支独立处理。
+   * 冲突 → 跳过并取消 PR；无冲突 → 直接合并。
+   */
+  async runBatchMerge(
+    repo: string,
     pairs: MergePair[],
     opts?: {
       onLog?: (msg: string, error?: boolean) => void;
-      conflictHandler?: ConflictHandler;
     }
   ): Promise<MergeResult> {
-    return await runAtomicBatchMergeByMerge(this.client, projectId, pairs, {
+    return await runBatchMerge(this.client, repo, pairs, {
       onLog: opts?.onLog,
-      conflictHandler: opts?.conflictHandler,
     });
   }
 }

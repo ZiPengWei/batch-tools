@@ -2,10 +2,8 @@
   <BatchMergeConfirmDialog
     ref="confirmRef"
     v-model:show="showConfirm"
-    :conflict-active="props.conflictActive"
-    :conflict-mr-web-url="props.conflictMrWebUrl"
     :log-lines="mergeLogLines"
-    :project-id="projects.selectedProjectId"
+    :repo="projects.selectedRepo"
     :run="merge.run"
     :source-branches="projects.selectedSourceBranch ? [projects.selectedSourceBranch] : []"
     :target-count="merge.selectedTargets.length"
@@ -24,9 +22,6 @@
  * BatchMergeFlowDialog
  * 用途：封装“确认合并弹窗 + 合并结果弹窗”的整体流程与状态管理，避免父组件直接控制弹窗显隐。
  *
- * Props：
- * - conflictActive/conflictMrWebUrl: 冲突处理中提示与 MR 链接（来自外部冲突处理流程）
- *
  * Emits：
  * - confirm-open/confirm-close: 确认弹窗显隐变更
  * - finish-open/finish-close: 结果弹窗显隐变更
@@ -43,17 +38,6 @@ export type BatchMergeFlowDialogExposed = {
   confirmRun: () => Promise<void>
   closeAll: () => void
 }
-
-const props = withDefaults(
-  defineProps<{
-    conflictActive?: boolean
-    conflictMrWebUrl?: string
-  }>(),
-  {
-    conflictActive: false,
-    conflictMrWebUrl: '',
-  },
-)
 
 const emit = defineEmits<{
   (e: 'confirm-open'): void

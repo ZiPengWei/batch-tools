@@ -1,11 +1,5 @@
-import type { GitLabClient } from "../gitlabClient";
-import type { GitLabMergeRequest } from "../../../shared/gitlab/types";
-import type {
-  MergeConflict,
-  MergeCreated,
-  MergeNoop,
-  MergeResult,
-} from "../mergeTypes";
+import type { CnbClient } from "../cnbClient";
+import type { CnbPull } from "../../../shared/cnb/types";
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -13,148 +7,122 @@ function sleep(ms: number) {
 
 export type LogFn = (msg: string, error?: boolean) => void;
 
+export type MergeableCheck =
+  | { ok: true; details: CnbPull }
+  | {
+      ok: false;
+      kind: "conflict" | "noop" | "merged" | "closed" | "timeout";
+      details?: CnbPull;
+      reason: string;
+    };
+
+/**
+ * 轮询等待 PR 进入可判定状态（基于 CNB 的 mergeable_state / blocked_on）：
+ * - mergeable → 可合并
+ * - conflict / blocked_on=code_conflict → 代码冲突
+ * - state=merged → 已被合并（如手动在网页合并）
+ * - state=closed → 已被关闭
+ * - checking / merging → 继续等待
+ * - 超时 → timeout
+ */
 export async function waitUntilMergeable(
-  client: GitLabClient,
-  projectId: number,
-  mrIid: number,
+  client: CnbClient,
+  repo: string,
+  pullNumber: string | number,
   opts?: {
     maxRetries?: number;
     pollIntervalMs?: number;
     onProgress?: (msg: string) => void;
-    strictConflictCheck?: boolean;
   }
-): Promise<
-  | { ok: true; details: GitLabMergeRequest }
-  | { ok: false; details?: GitLabMergeRequest; reason: string }
-> {
-  const maxRetries = opts?.maxRetries ?? 18;
+): Promise<MergeableCheck> {
+  const maxRetries = opts?.maxRetries ?? 30;
   const pollIntervalMs = opts?.pollIntervalMs ?? 1500;
-  const strictConflictCheck = opts?.strictConflictCheck ?? true;
 
-  let lastDetails: GitLabMergeRequest | undefined;
-  let lastConflictAttempt = -1;
+  let lastDetails: CnbPull | undefined;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     await sleep(pollIntervalMs);
-    const details = await client.getMergeRequest(projectId, mrIid);
+    const details = await client.getPull(repo, pullNumber);
     lastDetails = details;
 
-    const status = details.merge_status;
-    const detailed = details.detailed_merge_status;
-    const hasConflicts = details.has_conflicts;
-    const state = details.state;
+    const state = String(details.state || "");
+    const mergeableState = String(details.mergeable_state || "");
+    const blockedOn = String(details.blocked_on || "");
 
-    const extra: string[] = [];
-    if (detailed) extra.push(`detailed=${detailed}`);
-    if (hasConflicts != null) extra.push(`has_conflicts=${String(hasConflicts)}`);
-    const extraText = extra.length ? ` (${extra.join(", ")})` : "";
     opts?.onProgress?.(
-      `  [MR !${mrIid}] 检测 ${attempt + 1}/${maxRetries}: status=${status}, state=${state}${extraText}`
+      `  [PR #${pullNumber}] 检测 ${attempt + 1}/${maxRetries}: state=${state}, mergeable_state=${mergeableState}${
+        blockedOn ? `, blocked_on=${blockedOn}` : ""
+      }`
     );
 
-    if (state === "merged" || state === "closed")
-      return { ok: false, details, reason: `MR 已处于 ${state}` };
+    if (state === "merged")
+      return { ok: false, kind: "merged", details, reason: "PR 已处于 merged 状态" };
+    if (state === "closed")
+      return { ok: false, kind: "closed", details, reason: "PR 已被关闭" };
 
-    const changesCount = details.changes_count;
-    if (
-      status === "cannot_be_merged" ||
-      hasConflicts ||
-      detailed === "cannot_be_merged" ||
-      detailed === "conflicts"
-    ) {
-      lastConflictAttempt = attempt;
-      const changesData = await client.getMergeRequestChanges(projectId, mrIid);
-      const changes = changesData?.changes ?? [];
-      if (!changes.length)
-        return { ok: false, details, reason: "__noop_no_changes__" };
-      // 如果是非严格模式，给更多时间让 GitLab 更新状态
-      if (!strictConflictCheck && attempt < maxRetries - 1) {
-        // 如果连续多次都是冲突状态，可能真的有问题
-        if (lastConflictAttempt >= 0 && attempt - lastConflictAttempt > 10) {
-          opts?.onProgress?.(
-            `  [MR !${mrIid}] 警告：连续多次检测到冲突状态，可能确实存在未解决的冲突`
-          );
-        }
-        continue;
-      }
-      if (strictConflictCheck || attempt === maxRetries - 1)
-        return { ok: false, details, reason: "检测到冲突（不可合并）" };
-      continue;
+    if (mergeableState === "conflict" || blockedOn === "code_conflict") {
+      return {
+        ok: false,
+        kind: "conflict",
+        details,
+        reason: "检测到代码冲突（不可合并）",
+      };
+    }
+    if (mergeableState === "no-merge-base" || blockedOn === "no_merge_base") {
+      return {
+        ok: false,
+        kind: "conflict",
+        details,
+        reason: "两个分支没有共同祖先（no merge base）",
+      };
     }
 
-    if (
-      detailed === "not_needed" ||
-      detailed === "nothing_to_merge" ||
-      changesCount === "0" ||
-      changesCount === 0
-    ) {
-      const changesData = await client.getMergeRequestChanges(projectId, mrIid);
-      const changes = changesData?.changes ?? [];
-      if (!changes.length)
-        return { ok: false, details, reason: "__noop_no_changes__" };
-    }
-
-    if (status === "can_be_merged" && !hasConflicts) return { ok: true, details };
+    if (mergeableState === "mergeable") return { ok: true, details };
+    // checking / merging / 其他 → 继续轮询
   }
   return {
     ok: false,
+    kind: "timeout",
     details: lastDetails,
-    reason: "超时：无法确认是否可合并（GitLab 可能需要更多时间处理提交）",
+    reason: "超时：无法确认是否可合并（服务器可能需要更多时间）",
   };
 }
 
+/**
+ * 合并后轮询确认 PR 进入 merged 状态
+ */
 export async function waitUntilMerged(
-  client: GitLabClient,
-  projectId: number,
-  mrIid: number,
+  client: CnbClient,
+  repo: string,
+  pullNumber: string | number,
   opts?: {
     maxRetries?: number;
     pollIntervalMs?: number;
     onProgress?: (msg: string) => void;
   }
 ): Promise<
-  | { ok: true; details: GitLabMergeRequest }
-  | { ok: false; details?: GitLabMergeRequest; reason: string }
+  | { ok: true; details: CnbPull }
+  | { ok: false; details?: CnbPull; reason: string }
 > {
-  const maxRetries = opts?.maxRetries ?? 30;
+  const maxRetries = opts?.maxRetries ?? 15;
   const pollIntervalMs = opts?.pollIntervalMs ?? 2000;
 
-  let lastDetails: GitLabMergeRequest | undefined;
+  let lastDetails: CnbPull | undefined;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     await sleep(pollIntervalMs);
-    const details = await client.getMergeRequest(projectId, mrIid);
+    const details = await client.getPull(repo, pullNumber);
     lastDetails = details;
-    const state = details.state;
+    const state = String(details.state || "");
     if (state === "merged") return { ok: true, details };
-    if (state === "closed") return { ok: false, details, reason: "MR 已被关闭" };
-    opts?.onProgress?.(`  [MR !${mrIid}] 等待合并 ${attempt + 1}/${maxRetries}: state=${state}`);
+    if (state === "closed")
+      return { ok: false, details, reason: "PR 已被关闭（未合并）" };
+    opts?.onProgress?.(
+      `  [PR #${pullNumber}] 等待合并 ${attempt + 1}/${maxRetries}: state=${state}`
+    );
   }
   return {
     ok: false,
     details: lastDetails,
-    reason: "超时：合并未完成（可能在等待 pipeline/审批）",
+    reason: "超时：合并未完成",
   };
-}
-
-export async function rollback(
-  client: GitLabClient,
-  projectId: number,
-  created: MergeCreated[],
-  noop: MergeNoop[],
-  conflicts: MergeConflict[],
-  log?: LogFn
-): Promise<MergeResult> {
-  log?.("=== 触发回滚 (Atomic Rollback) ===", true);
-  for (const c of created) {
-    const iid = c.mr.iid;
-    if (!iid) continue;
-    if (c.isExisting) {
-      log?.(`保留已存在的 MR #${iid}`);
-      continue;
-    }
-    log?.(`正在清理 MR #${iid} ...`);
-    await client.deleteMergeRequest(projectId, iid);
-  }
-  log?.("回滚完成。", true);
-  return { ok: false, rolledBack: true, conflicts, noop };
 }

@@ -7,34 +7,77 @@
     @update:show="setShow"
   >
     <n-space vertical>
-      <template v-if="summary?.ok">
-        <n-text v-if="summary.mergedCount">
-          成功 MR: {{ summary.mergedCount }} 个
-        </n-text>
-        <n-text v-else-if="summary.noopCount">
-          本次无变更，已跳过: {{ summary.noopCount }} 项
-        </n-text>
-        <n-text v-else>
-          成功 MR: 0 个
-        </n-text>
-        <n-text v-if="summary.mergedCount && summary.noopCount">
-          已跳过无变更: {{ summary.noopCount }} 项
-        </n-text>
+      <template v-if="summary?.merged.length">
+        <div class="section-title">
+          <n-text type="success">
+            成功合并 ({{ summary.merged.length }})
+          </n-text>
+        </div>
+        <n-space vertical>
+          <n-text
+            v-for="(m, i) in summary.merged"
+            :key="`m-${i}`"
+          >
+            ✓ {{ m.source }} -> {{ m.target }}
+          </n-text>
+        </n-space>
       </template>
-      <template v-else>
-        <n-text v-if="summary">
-          冲突/失败: {{ summary.conflictsCount }} 项
-        </n-text>
-        <n-text v-if="summary?.rolledBack">
-          已回滚本次创建的 MR
-        </n-text>
-        <n-text
-          v-if="summary?.message"
-          type="error"
-        >
-          {{ summary.message }}
-        </n-text>
+
+      <template v-if="summary?.conflicts.length">
+        <div class="section-title">
+          <n-text type="warning">
+            存在冲突，已跳过并取消 PR ({{ summary.conflicts.length }})
+          </n-text>
+        </div>
+        <n-space vertical>
+          <n-text
+            v-for="(c, i) in summary.conflicts"
+            :key="`c-${i}`"
+          >
+            ✗ {{ c.source }} -> {{ c.target }}（{{ c.reason || '检测到冲突' }}）
+          </n-text>
+        </n-space>
       </template>
+
+      <template v-if="summary?.failures.length">
+        <div class="section-title">
+          <n-text type="error">
+            失败 ({{ summary.failures.length }})
+          </n-text>
+        </div>
+        <n-space vertical>
+          <n-text
+            v-for="(f, i) in summary.failures"
+            :key="`f-${i}`"
+          >
+            ✗ {{ f.source }} -> {{ f.target }}（{{ f.reason || '未知原因' }}）
+          </n-text>
+        </n-space>
+      </template>
+
+      <template v-if="summary?.noop.length">
+        <div class="section-title">
+          <n-text depth="3">
+            无变更，已跳过 ({{ summary.noop.length }})
+          </n-text>
+        </div>
+        <n-space vertical>
+          <n-text
+            v-for="(n, i) in summary.noop"
+            :key="`n-${i}`"
+            depth="3"
+          >
+            {{ n.source }} -> {{ n.target }}（{{ n.reason || '无变更' }}）
+          </n-text>
+        </n-space>
+      </template>
+
+      <n-text
+        v-if="summary?.message"
+        type="error"
+      >
+        {{ summary.message }}
+      </n-text>
 
       <div class="section-title">
         <n-text depth="3">
@@ -61,7 +104,7 @@
 <script setup lang="ts">
 /**
  * BatchMergeFinishDialog
- * 用途：批量合并结束后的结果弹窗，展示摘要与完整日志。
+ * 用途：批量合并结束后的结果弹窗，按分支展示成功/冲突/失败明细与完整日志。
  *
  * Props：
  * - show: 是否显示弹窗（v-model:show）
@@ -96,9 +139,10 @@ const finishTitle = computed(() => {
   const s = props.summary
   if (!s) return '合并结果'
   if (s.ok) {
-    if (s.mergedCount === 0 && s.noopCount > 0) return '合并完成（无变更）'
+    if (s.merged.length === 0 && s.noop.length > 0) return '合并完成（无变更）'
     return '合并完成'
   }
+  if (s.merged.length) return '部分合并完成'
   return '合并失败'
 })
 
@@ -128,5 +172,6 @@ function close() {
 <style scoped>
 .section-title {
   display: block;
+  margin-top: 8px;
 }
 </style>

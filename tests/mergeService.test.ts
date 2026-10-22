@@ -4,189 +4,162 @@ import { MergeService } from "../src/main/services/mergeService";
 
 function createClientMock() {
   return {
-    createMergeRequest: vi.fn(),
-    deleteMergeRequest: vi.fn().mockResolvedValue(true),
-    getMergeRequestConflicts: vi.fn().mockResolvedValue([]),
-    getMergeRequestChanges: vi
-      .fn()
-      .mockResolvedValue({ changes: [{ path: "x" }] }),
-    getMergeRequest: vi.fn(),
-    acceptMergeRequest: vi.fn().mockResolvedValue({}),
-    updateMergeRequest: vi.fn().mockResolvedValue({}),
+    compareBranches: vi.fn().mockResolvedValue({ totalCommits: 1 }),
+    createPull: vi.fn(),
+    findOpenPull: vi.fn().mockResolvedValue(null),
+    getPull: vi.fn(),
+    mergePull: vi.fn(),
+    closePull: vi.fn().mockResolvedValue(true),
   } as const;
 }
 
-describe("MergeService.runAtomicBatchMerge", () => {
+const REPO = "org/repo";
+
+describe("MergeService.runBatchMerge（每个目标分支独立处理）", () => {
   it("opts.onLog 会收到进度日志", async () => {
     vi.useFakeTimers();
     const client = createClientMock();
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 1 });
+    client.createPull.mockResolvedValueOnce({ number: "1" });
     const service = new MergeService(client as any);
-    client.getMergeRequest
+    client.getPull
       .mockResolvedValueOnce({
-        iid: 1,
-        merge_status: "can_be_merged",
-        detailed_merge_status: null,
-        has_conflicts: false,
-        state: "opened",
-        changes_count: "1",
+        number: "1",
+        state: "open",
+        mergeable_state: "mergeable",
       })
       .mockResolvedValueOnce({
-        iid: 1,
+        number: "1",
         state: "merged",
       });
+    client.mergePull.mockResolvedValueOnce({ merged: true, message: "ok" });
 
     const onLog = vi.fn();
-    const p = service.runAtomicBatchMerge(
-      1,
-      [{ source: "feat", target: "main" }],
-      { onLog }
-    );
+    const p = service.runBatchMerge(REPO, [
+      { source: "feat", target: "main" },
+    ], { onLog });
     await vi.runAllTimersAsync();
     await p;
     vi.useRealTimers();
 
     expect(onLog).toHaveBeenCalled();
     const texts = onLog.mock.calls.map((c) => c[0]);
-    expect(texts.some((t) => String(t).includes("正在创建 MR"))).toBe(true);
-    expect(texts.some((t) => String(t).includes("=== 阶段 2"))).toBe(true);
-    expect(texts.some((t) => String(t).includes("=== 阶段 3"))).toBe(true);
+    expect(texts.some((t) => String(t).includes("正在创建 PR"))).toBe(true);
+    expect(texts.some((t) => String(t).includes("✓ 合并成功"))).toBe(true);
+    expect(texts.some((t) => String(t).includes("=== 批量合并结束 ==="))).toBe(true);
   });
 
-  it("source==target 时返回 noop 且不创建 MR", async () => {
+  it("source==target 时返回 noop 且不创建 PR", async () => {
     const client = createClientMock();
     const service = new MergeService(client as any);
 
-    const res = await service.runAtomicBatchMerge(1, [
+    const res = await service.runBatchMerge(REPO, [
       { source: "a", target: "a" },
     ]);
 
-    expect(client.createMergeRequest).not.toHaveBeenCalled();
+    expect(client.createPull).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
-    if (!res.ok) throw new Error("unreachable");
-    expect(res.mergedIids).toEqual([]);
+    expect(res.merged).toEqual([]);
     expect(res.noop).toEqual([
       { type: "noop", source: "a", target: "a", reason: "source == target" },
     ]);
+    expect(res.conflicts).toEqual([]);
+    expect(res.failures).toEqual([]);
   });
 
-  it("检测到无变更时删除 MR 并跳过后续合并", async () => {
-    vi.useFakeTimers();
+  it("比较无变更时跳过创建 PR（noop）", async () => {
     const client = createClientMock();
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 10 });
-
+    client.compareBranches.mockResolvedValueOnce({ totalCommits: 0 });
     const service = new MergeService(client as any);
-    client.getMergeRequest.mockResolvedValueOnce({
-      iid: 10,
-      merge_status: "can_be_merged",
-      detailed_merge_status: "nothing_to_merge",
-      has_conflicts: false,
-      state: "opened",
-      changes_count: "0",
-    });
-    client.getMergeRequestChanges.mockResolvedValueOnce({ changes: [] });
 
-    const p = service.runAtomicBatchMerge(1, [
+    const res = await service.runBatchMerge(REPO, [
       { source: "feat", target: "main" },
     ]);
-    await vi.runAllTimersAsync();
-    const res = await p;
-    vi.useRealTimers();
 
-    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 10);
-    expect(client.acceptMergeRequest).not.toHaveBeenCalled();
+    expect(client.createPull).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
-    if (!res.ok) throw new Error("unreachable");
-    expect(res.mergedIids).toEqual([]);
+    expect(res.merged).toEqual([]);
     expect(res.noop).toEqual([
-      {
-        type: "noop",
-        source: "feat",
-        target: "main",
-        reason: "无变更",
-        mrIid: 10,
-      },
+      { type: "noop", source: "feat", target: "main", reason: "无变更" },
     ]);
   });
 
-  it("阶段 2 出现冲突时触发回滚并删除已创建 MR", async () => {
+  it("dev 有冲突时跳过并取消 PR，test 无冲突直接合并（互不影响）", async () => {
     vi.useFakeTimers();
     const client = createClientMock();
-    client.createMergeRequest
-      .mockResolvedValueOnce({ iid: 1 })
-      .mockResolvedValueOnce({ iid: 2 });
-    client.getMergeRequestConflicts.mockResolvedValueOnce([{ file: "a.txt" }]);
+    // 第一个 PR（-> dev）冲突；第二个 PR（-> test）可合并
+    client.createPull
+      .mockResolvedValueOnce({ number: "11" })
+      .mockResolvedValueOnce({ number: "12" });
+    client.getPull.mockImplementation(async (_repo: string, n: string) => {
+      if (n === "11")
+        return {
+          number: "11",
+          state: "open",
+          mergeable_state: "conflict",
+          blocked_on: "code_conflict",
+        };
+      return { number: "12", state: "open", mergeable_state: "mergeable" };
+    });
+    client.mergePull.mockResolvedValueOnce({ merged: true, message: "ok" });
 
     const service = new MergeService(client as any);
-    client.getMergeRequest
-      .mockResolvedValueOnce({
-        iid: 1,
-        merge_status: "can_be_merged",
-        detailed_merge_status: null,
-        has_conflicts: false,
-        state: "opened",
-        changes_count: "1",
-      })
-      .mockResolvedValueOnce({
-        iid: 2,
-        merge_status: "cannot_be_merged",
-        detailed_merge_status: "conflicts",
-        has_conflicts: true,
-        state: "opened",
-        changes_count: "1",
-        web_url: "u",
-      });
-    client.getMergeRequestChanges.mockResolvedValueOnce({
-      changes: [{ path: "x" }],
-    });
-
-    const p = service.runAtomicBatchMerge(1, [
-      { source: "a", target: "main" },
-      { source: "b", target: "main" },
-    ]);
+    const onLog = vi.fn();
+    const p = service.runBatchMerge(
+      REPO,
+      [
+        { source: "fix-1", target: "dev" },
+        { source: "fix-1", target: "test" },
+      ],
+      { onLog }
+    );
     await vi.runAllTimersAsync();
     const res = await p;
     vi.useRealTimers();
 
+    // 冲突分支：跳过并取消 PR
+    expect(client.closePull).toHaveBeenCalledWith(REPO, "11");
     expect(res.ok).toBe(false);
-    if (res.ok) throw new Error("unreachable");
-    expect(res.rolledBack).toBe(true);
     expect(res.conflicts).toEqual([
       {
         type: "conflict",
-        source: "b",
-        target: "main",
-        reason: "检测到冲突（不可合并）",
-        mrIid: 2,
-        mrWebUrl: "u",
-        conflicts: [{ file: "a.txt" }],
+        source: "fix-1",
+        target: "dev",
+        reason: "检测到代码冲突（不可合并）",
+        prNumber: "11",
       },
     ]);
-    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 1);
-    expect(client.deleteMergeRequest).toHaveBeenCalledWith(1, 2);
+    // 无冲突分支：直接合并成功
+    expect(client.mergePull).toHaveBeenCalledWith(REPO, "12");
+    expect(res.merged).toEqual([
+      { type: "merged", source: "fix-1", target: "test", prNumber: "12" },
+    ]);
+    expect(res.failures).toEqual([]);
+
+    const texts = onLog.mock.calls.map((c) => c[0]);
+    expect(
+      texts.some((t) => String(t).includes("✗ 检测到冲突，已跳过并取消 PR"))
+    ).toBe(true);
+    expect(
+      texts.some((t) => String(t).includes("存在冲突已跳过的分支: fix-1 -> dev"))
+    ).toBe(true);
+    expect(
+      texts.some((t) => String(t).includes("成功合并的分支: fix-1 -> test"))
+    ).toBe(true);
   });
 
-  it("阶段 3 合并未完成时不回滚但会关闭 MR 并返回失败", async () => {
+  it("blocked_on=code_conflict 但 mergeable_state 未更新时也识别为冲突", async () => {
     vi.useFakeTimers();
     const client = createClientMock();
-    client.createMergeRequest.mockResolvedValueOnce({ iid: 3 });
+    client.createPull.mockResolvedValueOnce({ number: "21" });
+    client.getPull.mockResolvedValue({
+      number: "21",
+      state: "open",
+      mergeable_state: "checking",
+      blocked_on: "code_conflict",
+    });
 
     const service = new MergeService(client as any);
-    client.getMergeRequest
-      .mockResolvedValueOnce({
-        iid: 3,
-        merge_status: "can_be_merged",
-        detailed_merge_status: null,
-        has_conflicts: false,
-        state: "opened",
-        changes_count: "1",
-      })
-      .mockResolvedValueOnce({
-        iid: 3,
-        state: "closed",
-      });
-
-    const p = service.runAtomicBatchMerge(1, [
+    const p = service.runBatchMerge(REPO, [
       { source: "feat", target: "main" },
     ]);
     await vi.runAllTimersAsync();
@@ -194,10 +167,255 @@ describe("MergeService.runAtomicBatchMerge", () => {
     vi.useRealTimers();
 
     expect(res.ok).toBe(false);
-    if (res.ok) throw new Error("unreachable");
-    expect(res.rolledBack).toBe(false);
-    expect(client.updateMergeRequest).toHaveBeenCalledWith(1, 3, "close");
-    expect(res.conflicts[0]).toMatchObject({ mrIid: 3 });
+    expect(res.conflicts.length).toBe(1);
+    expect(res.conflicts[0].reason).toContain("代码冲突");
+    expect(client.closePull).toHaveBeenCalledWith(REPO, "21");
+    expect(client.mergePull).not.toHaveBeenCalled();
+  });
+
+  it("创建 PR 失败时优先复用已存在的 open PR", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createPull.mockResolvedValueOnce({
+      status: "error",
+      message: "pull request already exists",
+    });
+    client.findOpenPull.mockResolvedValueOnce({
+      number: "31",
+      state: "open",
+      head: { ref: "refs/heads/feat" },
+      base: { ref: "refs/heads/main" },
+    });
+    client.getPull.mockResolvedValueOnce({
+      number: "31",
+      state: "open",
+      mergeable_state: "mergeable",
+    });
+    client.mergePull.mockResolvedValueOnce({ merged: true, message: "ok" });
+
+    const service = new MergeService(client as any);
+    const onLog = vi.fn();
+    const p = service.runBatchMerge(
+      REPO,
+      [{ source: "feat", target: "main" }],
+      { onLog }
+    );
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(client.findOpenPull).toHaveBeenCalledWith(REPO, "feat", "main");
+    expect(client.mergePull).toHaveBeenCalledWith(REPO, "31");
+    expect(res.ok).toBe(true);
+    expect(res.merged).toEqual([
+      { type: "merged", source: "feat", target: "main", prNumber: "31" },
+    ]);
+    const texts = onLog.mock.calls.map((c) => c[0]);
+    expect(texts.some((t) => String(t).includes("已存在的 PR #31"))).toBe(true);
+  });
+
+  it("创建 PR 失败且无已存在 PR 时记为失败", async () => {
+    const client = createClientMock();
+    client.createPull.mockResolvedValueOnce({
+      status: "error",
+      message: "没有权限",
+    });
+    const service = new MergeService(client as any);
+
+    const res = await service.runBatchMerge(REPO, [
+      { source: "feat", target: "main" },
+    ]);
+
+    expect(res.ok).toBe(false);
+    expect(res.failures).toEqual([
+      {
+        type: "failure",
+        source: "feat",
+        target: "main",
+        reason: "没有权限",
+      },
+    ]);
+  });
+
+  it("创建 PR 返回 noop 错误时记为无变更", async () => {
+    const client = createClientMock();
+    client.compareBranches.mockResolvedValueOnce(null); // 预检失败，走创建
+    client.createPull.mockResolvedValueOnce({
+      status: "noop",
+      message: "无变更",
+    });
+    const service = new MergeService(client as any);
+
+    const res = await service.runBatchMerge(REPO, [
+      { source: "feat", target: "main" },
+    ]);
+
+    expect(res.ok).toBe(true);
+    expect(res.noop).toEqual([
+      { type: "noop", source: "feat", target: "main", reason: "无变更" },
+    ]);
+  });
+
+  it("合并调用失败时取消 PR 并记为失败", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createPull.mockResolvedValueOnce({ number: "41" });
+    client.getPull.mockResolvedValue({
+      number: "41",
+      state: "open",
+      mergeable_state: "mergeable",
+    });
+    client.mergePull.mockRejectedValueOnce(new Error("分支保护：需要评审"));
+
+    const service = new MergeService(client as any);
+    const p = service.runBatchMerge(REPO, [
+      { source: "feat", target: "main" },
+    ]);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(res.ok).toBe(false);
+    expect(res.failures.length).toBe(1);
+    expect(res.failures[0].reason).toContain("分支保护");
+    expect(client.closePull).toHaveBeenCalledWith(REPO, "41");
+  });
+
+  it("PR 已被手动合并（state=merged）时计入成功", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createPull.mockResolvedValueOnce({ number: "51" });
+    client.getPull.mockResolvedValue({
+      number: "51",
+      state: "merged",
+      mergeable_state: "merged",
+    });
+
+    const service = new MergeService(client as any);
+    const p = service.runBatchMerge(REPO, [
+      { source: "feat", target: "main" },
+    ]);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(res.ok).toBe(true);
+    expect(res.merged).toEqual([
+      { type: "merged", source: "feat", target: "main", prNumber: "51" },
+    ]);
+    expect(client.mergePull).not.toHaveBeenCalled();
+    expect(client.closePull).not.toHaveBeenCalled();
+  });
+
+  it("可合并状态检测超时时取消 PR 并记为失败", async () => {
+    vi.useFakeTimers();
+    const client = createClientMock();
+    client.createPull.mockResolvedValueOnce({ number: "61" });
+    client.getPull.mockResolvedValue({
+      number: "61",
+      state: "open",
+      mergeable_state: "checking",
+    });
+
+    const service = new MergeService(client as any);
+    const p = service.runBatchMerge(REPO, [
+      { source: "feat", target: "main" },
+    ]);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    vi.useRealTimers();
+
+    expect(res.ok).toBe(false);
+    expect(res.failures.length).toBe(1);
+    expect(res.failures[0].reason).toContain("超时");
+    expect(client.closePull).toHaveBeenCalledWith(REPO, "61");
+  });
+});
+
+describe("CnbClient", () => {
+  it("仓库路径中的特殊字符会被逐段编码", async () => {
+    const axiosMod: any = await import("axios");
+    const get = vi.fn().mockResolvedValue({ status: 200, data: [] });
+    const post = vi.fn().mockResolvedValue({ status: 201, data: { number: "1" } });
+    (axiosMod.default.create as any).mockReturnValueOnce({ get, post });
+
+    const { CnbClient } = await import("../src/main/services/cnbClient");
+    const client = new CnbClient("https://api.cnb.cool", "t");
+    await client.getBranches("org/sub/repo name");
+    await client.createPull("org/sub/repo name", "feat", "main", "title");
+
+    expect(get.mock.calls[0][0]).toBe("/org/sub/repo%20name/-/git/branches");
+    expect(post.mock.calls[0][0]).toBe("/org/sub/repo%20name/-/pulls");
+    expect(post.mock.calls[0][1]).toEqual({
+      head: "feat",
+      base: "main",
+      title: "title",
+    });
+  });
+
+  it("createPull 无变更错误返回 noop", async () => {
+    const axiosMod: any = await import("axios");
+    const post = vi
+      .fn()
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 400, data: { errcode: 1, errmsg: "没有可合并的变更" } },
+      });
+    (axiosMod.default.create as any).mockReturnValueOnce({ post });
+
+    const { CnbClient } = await import("../src/main/services/cnbClient");
+    const client = new CnbClient("https://api.cnb.cool", "t");
+    const res = await client.createPull("org/repo", "feat", "main", "title");
+    expect(res).toEqual({ status: "noop", message: "没有可合并的变更" });
+  });
+
+  it("mergePull 返回合并结果", async () => {
+    const axiosMod: any = await import("axios");
+    const put = vi
+      .fn()
+      .mockResolvedValue({ status: 200, data: { merged: true, sha: "abc" } });
+    (axiosMod.default.create as any).mockReturnValueOnce({ put });
+
+    const { CnbClient } = await import("../src/main/services/cnbClient");
+    const client = new CnbClient("https://api.cnb.cool", "t");
+    const res = await client.mergePull("org/repo", "12");
+    expect(res).toEqual({ merged: true, message: "", sha: "abc" });
+    expect(put.mock.calls[0][0]).toBe("/org/repo/-/pulls/12/merge");
+    expect(put.mock.calls[0][1]).toEqual({ merge_style: "merge" });
+  });
+
+  it("closePull 通过 PATCH state=closed 取消 PR", async () => {
+    const axiosMod: any = await import("axios");
+    const patch = vi.fn().mockResolvedValue({ status: 200, data: {} });
+    (axiosMod.default.create as any).mockReturnValueOnce({ patch });
+
+    const { CnbClient } = await import("../src/main/services/cnbClient");
+    const client = new CnbClient("https://api.cnb.cool", "t");
+    const ok = await client.closePull("org/repo", "12");
+    expect(ok).toBe(true);
+    expect(patch.mock.calls[0][0]).toBe("/org/repo/-/pulls/12");
+    expect(patch.mock.calls[0][1]).toEqual({ state: "closed" });
+  });
+
+  it("findOpenPull 按源分支过滤已存在的 open PR", async () => {
+    const axiosMod: any = await import("axios");
+    const get = vi.fn().mockResolvedValue({
+      status: 200,
+      data: [
+        { number: "1", state: "open", head: { ref: "refs/heads/other" } },
+        { number: "2", state: "open", head: { ref: "refs/heads/feat" } },
+      ],
+    });
+    (axiosMod.default.create as any).mockReturnValueOnce({ get });
+
+    const { CnbClient } = await import("../src/main/services/cnbClient");
+    const client = new CnbClient("https://api.cnb.cool", "t");
+    const pr = await client.findOpenPull("org/repo", "feat", "main");
+    expect(pr && (pr as any).number).toBe("2");
+    expect(get.mock.calls[0][1]?.params).toMatchObject({
+      state: "open",
+      base_ref: "main",
+    });
   });
 });
 
@@ -212,120 +430,4 @@ vi.mock("axios", async () => {
     create: vi.fn(),
     isAxiosError: (e: any) => Boolean(e && e.isAxiosError),
   };
-});
-
-describe("GitLabClient.conflicts.json", () => {
-  it("conflicts.json 200 且包含 files 时能解析为冲突文件列表", async () => {
-    const axiosMod: any = await import("axios");
-    const get = vi.fn().mockResolvedValueOnce({
-      status: 200,
-      data: { files: [{ new_path: "a.txt" }, { new_path: "b.txt" }] },
-      headers: { "content-type": "application/json" },
-      config: { headers: { "PRIVATE-TOKEN": "t" } },
-    });
-    (axiosMod.default.create as any).mockReturnValueOnce({ get });
-
-    const { GitLabClient } = await import("../src/main/services/gitlabClient");
-    const client = new GitLabClient("http://gitlab.example", "t");
-    const diag = vi.fn();
-    const res = await client.getMergeRequestConflictsJsonByMrWebUrl(
-      "http://gitlab.example/group/proj/-/merge_requests/1291",
-      1291,
-      diag
-    );
-    expect(res.map((x: any) => x.new_path)).toEqual(["a.txt", "b.txt"]);
-    expect(diag).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: true, status: 200 })
-    );
-  });
-
-  it("conflicts.json 404 时返回空列表并记录诊断", async () => {
-    const axiosMod: any = await import("axios");
-    const get = vi.fn().mockResolvedValueOnce({
-      status: 404,
-      data: { message: "Not Found" },
-      headers: { "content-type": "application/json" },
-      config: { headers: { "PRIVATE-TOKEN": "t" } },
-    });
-    (axiosMod.default.create as any).mockReturnValueOnce({ get });
-
-    const { GitLabClient } = await import("../src/main/services/gitlabClient");
-    const client = new GitLabClient("http://gitlab.example", "t");
-    const diag = vi.fn();
-    const res = await client.getMergeRequestConflictsJsonByMrWebUrl(
-      "http://gitlab.example/group/proj/-/merge_requests/1291",
-      1291,
-      diag
-    );
-    expect(res).toEqual([]);
-    expect(diag).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: false, status: 404 })
-    );
-  });
-
-  it("conflicts.json 200 但返回 HTML 时应当返回空列表并标记诊断失败", async () => {
-    const axiosMod: any = await import("axios");
-    const get = vi.fn().mockResolvedValueOnce({
-      status: 200,
-      data: "<html>login</html>",
-      headers: { "content-type": "text/html; charset=utf-8" },
-      config: { headers: { "PRIVATE-TOKEN": "t" } },
-    });
-    (axiosMod.default.create as any).mockReturnValueOnce({ get });
-
-    const { GitLabClient } = await import("../src/main/services/gitlabClient");
-    const client = new GitLabClient("http://gitlab.example", "t");
-    const diag = vi.fn();
-    const res = await client.getMergeRequestConflictsJsonByMrWebUrl(
-      "http://gitlab.example/group/proj/-/merge_requests/1291",
-      1291,
-      diag
-    );
-    expect(res).toEqual([]);
-    expect(diag).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: false, status: 200 })
-    );
-  });
-});
-
-describe("GitLabClient.file metadata", () => {
-  it("repository files HEAD 200 时应解析 last_commit_id", async () => {
-    const axiosMod: any = await import("axios");
-    const head = vi.fn().mockResolvedValueOnce({
-      status: 200,
-      headers: {
-        "x-gitlab-last-commit-id": "abc123",
-        "x-gitlab-content-sha256": "sha256v",
-        "x-gitlab-size": "42",
-      },
-    });
-    (axiosMod.default.create as any).mockReturnValueOnce({ head });
-
-    const { GitLabClient } = await import("../src/main/services/gitlabClient");
-    const client = new GitLabClient("http://gitlab.example", "t");
-    const meta = await client.getFileMetadata(1, "src/a.txt", "feat");
-
-    expect(meta).toEqual({
-      file_path: "src/a.txt",
-      ref: "feat",
-      last_commit_id: "abc123",
-      content_sha256: "sha256v",
-      size: 42,
-    });
-  });
-
-  it("repository files HEAD 404 时应返回 null", async () => {
-    const axiosMod: any = await import("axios");
-    const head = vi.fn().mockResolvedValueOnce({
-      status: 404,
-      headers: {},
-    });
-    (axiosMod.default.create as any).mockReturnValueOnce({ head });
-
-    const { GitLabClient } = await import("../src/main/services/gitlabClient");
-    const client = new GitLabClient("http://gitlab.example", "t");
-    const meta = await client.getFileMetadata(1, "src/missing.txt", "feat");
-
-    expect(meta).toBeNull();
-  });
 });

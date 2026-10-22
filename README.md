@@ -1,6 +1,6 @@
-# GitLab 批量合并工具 (GitLab Batch Merge Tool)
+# CNB 批量合并工具 (CNB Batch Merge Tool)
 
-这是一个基于 **Electron** + **Vue 3** 构建的桌面应用程序，旨在帮助开发者高效地在 GitLab 项目中执行多分支批量合并操作，简化发布流程中的分支管理。
+这是一个基于 **Electron** + **Vue 3** 构建的桌面应用程序，旨在帮助开发者高效地在 [CNB (cnb.cool)](https://cnb.cool) 仓库中执行多分支批量合并操作，简化发布流程中的分支管理。
 
 ## ✨ 主要特性
 
@@ -8,12 +8,13 @@
 - **智能分支管理**:
   - 自动识别并置顶核心环境分支（如 `dev`, `test`, `gray`）。
   - 支持多选目标分支，一次性将代码合并到多个环境。
-- **原子批量合并**: 核心合并逻辑支持原子化操作，确保合并流程的可控性。
-- **冲突处理机制**:
-  - 内置冲突检测功能。
-  - 提供可视化冲突解决弹窗 (`ConflictDialog`)，辅助处理合并冲突。
+- **独立批量合并**: 每个目标分支独立处理，互不影响：
+  - 无变更 → 自动跳过。
+  - **检测到冲突 → 跳过该分支并自动取消（关闭）对应 PR**。
+  - 无冲突 → 直接合并。
+  - 结束后汇总提示：哪些分支冲突、哪些分支成功合并。
 - **实时日志反馈**: 在合并过程中实时展示操作日志，方便追踪进度和排查错误。
-- **安全认证**: 支持通过 GitLab Personal Access Token 进行安全连接与鉴权。
+- **安全认证**: 支持通过 CNB 访问令牌（Access Token）进行安全连接与鉴权。
 
 ## 🛠️ 技术栈
 
@@ -22,7 +23,6 @@
 - **核心框架**: [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) + [Vite](https://vitejs.dev/)
 - **桌面容器**: [Electron](https://www.electronjs.org/)
 - **状态管理**: [Pinia](https://pinia.vuejs.org/)
-- **编辑器组件**: [Monaco Editor](https://microsoft.github.io/monaco-editor/) (用于代码查看与冲突解决)
 - **单元测试**: [Vitest](https://vitest.dev/)
 
 ## 🚀 开发环境设置
@@ -103,25 +103,53 @@ IDE/编辑器建议（以 VS Code 为例）：
 
 ## 📖 使用指南
 
-1.  **配置连接**: 启动应用后，输入您的 GitLab 实例地址（URL）和 Personal Access Token。
-2.  **选择项目**: 从列表中选择您要操作的 GitLab 项目。
-3.  **选择源分支**: 在左侧面板选择包含新代码的源分支（Source Branch）。
-4.  **选择目标分支**: 在右侧面板勾选一个或多个需要合并到的目标分支（Target Branches）。
-5.  **执行合并**: 点击底部的“开始批量合并”按钮。
-6.  **处理冲突**: 如果合并过程中发生冲突，应用会弹出冲突解决对话框，请根据提示解决冲突并提交。
+1.  **创建访问令牌**: 登录 [cnb.cool](https://cnb.cool) → 个人设置 → 访问令牌，创建包含以下权限的令牌：
+    - `account-profile:r`（验证令牌）
+    - `account-engage:r`（获取仓库列表）
+    - `repo-code:r`（获取分支、比较差异）
+    - `repo-pr:rw`（创建/合并/取消 PR）
+2.  **配置连接**: 启动应用后，输入 CNB API 地址（默认 `https://api.cnb.cool`）和访问令牌。
+3.  **选择仓库**: 从列表中选择您要操作的仓库（以完整路径展示，如 `org/repo`）。
+4.  **选择源分支**: 在左侧面板选择包含新代码的源分支（Source Branch）。
+5.  **选择目标分支**: 在右侧面板勾选一个或多个需要合并到的目标分支（Target Branches）。
+6.  **执行合并**: 点击底部的“合并”按钮并确认。
+7.  **查看结果**: 合并结束后会弹出结果窗口，按分支展示：
+    - ✓ 成功合并的分支
+    - ✗ 存在冲突被跳过（PR 已自动取消）的分支
+    - 失败/无变更的分支及原因
+
+例如：`fix-1` 分支同时合并到 `dev` 和 `test`，若 `dev` 存在冲突，则跳过 `dev` 并取消其 PR，`test` 无冲突则直接合并；最终提示“存在冲突已跳过的分支: fix-1 -> dev”、“成功合并的分支: fix-1 -> test”。
 
 ## 📂 项目结构
 
 ```text
 ├── electron/        # Electron 主进程代码 (Main Process)
 ├── src/
-│   ├── main/        # 核心业务逻辑 (GitLab Client, Merge Service)
+│   ├── main/        # 核心业务逻辑 (CNB Client, Merge Service)
 │   ├── renderer/    # 渲染进程代码 (Vue Components, Stores)
 │   ├── shared/      # 前后端共享的类型定义
 │   └── ...
 ├── tests/           # 单元测试文件
 └── ...
 ```
+
+## 🔌 CNB Open API 说明
+
+应用通过 [CNB Open API](https://api.cnb.cool/) 与 CNB 交互，主要接口映射：
+
+| 功能 | API |
+|---|---|
+| 验证令牌 | `GET /user` |
+| 仓库列表 | `GET /user/repos?role=Developer`（分页） |
+| 分支列表 | `GET /{repo}/-/git/branches`（分页） |
+| 无变更预检 | `GET /{repo}/-/git/compare/{base...head}` |
+| 创建 PR | `POST /{repo}/-/pulls` |
+| 查询 PR（含冲突状态） | `GET /{repo}/-/pulls/{number}` |
+| 查询已存在 PR | `GET /{repo}/-/pulls?state=open&base_ref=...` |
+| 合并 PR | `PUT /{repo}/-/pulls/{number}/merge` |
+| 取消（关闭）PR | `PATCH /{repo}/-/pulls/{number}` `{state: closed}` |
+
+冲突判定基于 PR 的 `mergeable_state`（`conflict`）与 `blocked_on`（`code_conflict`）字段。
 
 ## 🎨 UI 规范：Naive UI 组件保持原生
 

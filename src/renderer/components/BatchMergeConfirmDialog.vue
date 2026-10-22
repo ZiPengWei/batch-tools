@@ -11,7 +11,7 @@
     <n-space vertical>
       <n-text>源分支: {{ sourceBranches.length }} 个</n-text>
       <n-text>目标分支: {{ targetCount }} 个</n-text>
-      <n-text>总计创建 MR: {{ targetCount }} 个</n-text>
+      <n-text>总计创建 PR: {{ targetCount }} 个</n-text>
       <n-alert
         :show-icon="true"
         type="warning"
@@ -26,20 +26,6 @@
           class="log-wrapper"
           data-testid="confirm-log-wrapper"
         >
-          <div
-            v-if="conflictActive"
-            class="conflict-bar"
-          >
-            <n-text type="warning">
-              冲突处理中：已弹出冲突解决窗口，请完成处理后继续。
-            </n-text>
-            <n-button
-              v-if="conflictMrWebUrl"
-              @click="emitOpenConflictMr"
-            >
-              打开 MR
-            </n-button>
-          </div>
           <div
             v-if="confirmLogHint"
             class="hint"
@@ -88,12 +74,11 @@
  *
  * Props：
  * - show: 是否显示弹窗（v-model:show）
- * - projectId: 当前项目 ID
+ * - repo: 当前仓库路径（org/repo）
  * - sourceBranches: 源分支列表
  * - targetCount: 目标分支数量（用于展示文案）
  * - logLines: 日志文本行数组
  * - run: 触发合并的异步函数，返回合并摘要或 null
- * - conflictActive/conflictMrWebUrl: 冲突处理中提示与 MR 链接
  * - disableCloseWhenRunning: 运行中是否禁止关闭
  * - modalWidth/confirmTitle/runningTitle/warningText: 文案与样式可配置项
  *
@@ -103,7 +88,6 @@
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import type { MergeRunSummary } from '../store/merge'
-import { openExternal } from '../ipc/bridge'
 import {
   NAlert,
   NButton,
@@ -123,13 +107,11 @@ export type BatchMergeConfirmDialogExposed = {
 const props = withDefaults(
   defineProps<{
     show: boolean
-    projectId: number | null | undefined
+    repo: string | null | undefined
     sourceBranches: string[]
     targetCount: number
     logLines: string[]
-    run: (projectId: number, sourceBranches: string[]) => Promise<MergeRunSummary | null>
-    conflictActive?: boolean
-    conflictMrWebUrl?: string
+    run: (repo: string, sourceBranches: string[]) => Promise<MergeRunSummary | null>
     disableCloseWhenRunning?: boolean
     modalWidth?: string
     confirmTitle?: string
@@ -137,14 +119,12 @@ const props = withDefaults(
     warningText?: string
   }>(),
   {
-    conflictActive: false,
-    conflictMrWebUrl: '',
     disableCloseWhenRunning: true,
     modalWidth: 'min(600px, 92vw)',
     confirmTitle: '确认合并',
     runningTitle: '正在合并...',
     warningText:
-      '注意：先创建 MR 并检测是否可合并；若检测到冲突/无法确认，将回滚（删除/关闭）本次创建的 MR。',
+      '注意：每个目标分支独立处理；检测到冲突时将跳过该分支并自动取消对应 PR，其余分支继续合并。',
   },
 )
 
@@ -196,22 +176,16 @@ function stopRunning() {
   confirmRunning.value = false
 }
 
-function emitOpenConflictMr() {
-  const url = props.conflictMrWebUrl || ''
-  if (!url) return
-  openExternal(url)
-}
-
 async function confirmRun() {
-  const projectId = props.projectId
-  if (projectId == null) return
+  const repo = props.repo
+  if (!repo) return
   if (!props.sourceBranches.length) return
 
   confirmRunning.value = true
   emit('run-start')
   await nextTick()
 
-  const summary = await props.run(projectId, props.sourceBranches)
+  const summary = await props.run(repo, props.sourceBranches)
   emit('run-finish', summary)
 
   confirmRunning.value = false
@@ -247,15 +221,6 @@ defineExpose<BatchMergeConfirmDialogExposed>({
 <style scoped>
 .log-wrapper {
   margin-top: 16px;
-}
-
-.conflict-bar {
-  margin-bottom: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
 }
 
 .hint {

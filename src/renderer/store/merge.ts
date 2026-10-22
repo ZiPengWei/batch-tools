@@ -5,18 +5,21 @@ const isE2E =
   (import.meta as any).env?.VITE_E2E === "1" ||
   String((import.meta as any).env?.MODE || "").toLowerCase() === "e2e";
 
-export type MergeRunSummary =
-  | {
-      ok: true;
-      mergedCount: number;
-      noopCount: number;
-    }
-  | {
-      ok: false;
-      conflictsCount: number;
-      rolledBack: boolean;
-      message?: string;
-    };
+/**
+ * 批量合并结果摘要（分支级明细）
+ * - merged: 成功合并的分支对
+ * - conflicts: 检测到冲突被跳过（PR 已取消）的分支对
+ * - noop: 无变更跳过
+ * - failures: 其他失败
+ */
+export type MergeRunSummary = {
+  ok: boolean;
+  merged: Array<{ source: string; target: string }>;
+  conflicts: Array<{ source: string; target: string; reason?: string }>;
+  noop: Array<{ source: string; target: string; reason?: string }>;
+  failures: Array<{ source: string; target: string; reason?: string }>;
+  message?: string;
+};
 
 export type MergeLogLine = {
   ts: number;
@@ -64,10 +67,10 @@ export const useMergeStore = defineStore("merge", {
       }
     },
     async run(
-      projectId: number,
+      repo: string,
       sourceBranches: string[]
     ): Promise<MergeRunSummary | null> {
-      if (!projectId || !sourceBranches.length || !this.selectedTargets.length)
+      if (!repo || !sourceBranches.length || !this.selectedTargets.length)
         return null;
       const totalOps = sourceBranches.length * this.selectedTargets.length;
       this.running = true;
@@ -90,8 +93,17 @@ export const useMergeStore = defineStore("merge", {
               }
             }, 20);
           });
-          this.log(`全部已合并，成功 MR 数量：${totalOps}`);
-          return { ok: true, mergedCount: totalOps, noopCount: 0 };
+          this.log(`全部已合并，成功 PR 数量：${totalOps}`);
+          return {
+            ok: true,
+            merged: this.selectedTargets.map((t) => ({
+              source: sourceBranches[0] || "",
+              target: t,
+            })),
+            conflicts: [],
+            noop: [],
+            failures: [],
+          };
         } finally {
           this.running = false;
           this.activeRunId = "";
@@ -99,7 +111,7 @@ export const useMergeStore = defineStore("merge", {
       }
 
       const payload = {
-        projectId,
+        repo,
         pairs: sourceBranches.flatMap((s) =>
           this.selectedTargets.map((t) => ({
             source: s,
@@ -117,32 +129,57 @@ export const useMergeStore = defineStore("merge", {
           this.log(e.text, !!e.error);
         });
         const res = await batchMerge(payload);
-        if (res.ok) {
-          const mergedCount = res.mergedIids.length;
-          const noopCount = res.noop?.length || 0;
-          if (mergedCount === 0 && noopCount > 0) {
-            this.log(`本次无变更，已跳过：${noopCount} 项`);
+        const summary: MergeRunSummary = {
+          ok: res.ok,
+          merged: res.merged || [],
+          conflicts: res.conflicts || [],
+          noop: res.noop || [],
+          failures: res.failures || [],
+        };
+        if (summary.ok) {
+          if (summary.merged.length === 0 && summary.noop.length > 0) {
+            this.log(`本次无变更，已跳过：${summary.noop.length} 项`);
           } else {
-            this.log(`全部已合并，成功 MR 数量：${mergedCount}`);
-            if (noopCount) this.log(`已跳过无变更：${noopCount} 项`);
+            this.log(
+              `全部已合并，成功分支：${summary.merged
+                .map((m) => m.target)
+                .join("、")}`
+            );
           }
-          return { ok: true, mergedCount, noopCount };
         } else {
-          if (res.rolledBack) this.log("已回滚本次创建的 MR。", true);
-          this.log(`存在冲突或失败：${res.conflicts.length} 项`, true);
-          return {
-            ok: false,
-            conflictsCount: res.conflicts.length,
-            rolledBack: !!res.rolledBack,
-          };
+          if (summary.merged.length)
+            this.log(
+              `成功合并的分支：${summary.merged
+                .map((m) => `${m.source} -> ${m.target}`)
+                .join("、")}`
+            );
+          if (summary.conflicts.length)
+            this.log(
+              `存在冲突已跳过的分支：${summary.conflicts
+                .map((m) => `${m.source} -> ${m.target}`)
+                .join("、")}`,
+              true
+            );
+          if (summary.failures.length)
+            this.log(
+              `失败的分支：${summary.failures
+                .map((m) => `${m.source} -> ${m.target}`)
+                .join("、")}`,
+              true
+            );
+          if (summary.noop.length)
+            this.log(`已跳过无变更：${summary.noop.length} 项`);
         }
+        return summary;
       } catch (e) {
         const msg = String(e);
         this.log(msg, true);
         return {
           ok: false,
-          conflictsCount: 0,
-          rolledBack: false,
+          merged: [],
+          conflicts: [],
+          noop: [],
+          failures: [],
           message: msg,
         };
       } finally {

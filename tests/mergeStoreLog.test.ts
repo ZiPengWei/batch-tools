@@ -1,8 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
 let batchMergeLogCallback: ((e: any) => void) | null = null;
 const stopListenSpy = vi.fn();
+
+let batchMergeResult: any = {
+  ok: true,
+  merged: [{ type: "merged", source: "feat", target: "main", prNumber: "1" }],
+  conflicts: [],
+  noop: [],
+  failures: [],
+};
 
 vi.mock("../src/renderer/ipc/bridge", () => {
   return {
@@ -18,12 +26,22 @@ vi.mock("../src/renderer/ipc/bridge", () => {
       batchMergeLogCallback?.({ runId: "other", text: "should-not-show" });
       batchMergeLogCallback?.({ runId, text: "step-1" });
       batchMergeLogCallback?.({ runId, text: "step-2", error: true });
-      return { ok: true, mergedIids: [], noop: [] };
+      return batchMergeResult;
     },
   };
 });
 
 import { useMergeStore } from "../src/renderer/store/merge";
+
+beforeEach(() => {
+  batchMergeResult = {
+    ok: true,
+    merged: [{ type: "merged", source: "feat", target: "main", prNumber: "1" }],
+    conflicts: [],
+    noop: [],
+    failures: [],
+  };
+});
 
 describe("merge store log wiring", () => {
   it("run() 会把批量合并日志写入 logLines，并按 runId 过滤", async () => {
@@ -31,13 +49,14 @@ describe("merge store log wiring", () => {
     const store = useMergeStore();
     store.selectedTargets = ["main"];
 
-    const res = await store.run(1, ["feat"]);
+    const res = await store.run("org/repo", ["feat"]);
     expect(res?.ok).toBe(true);
 
     const texts = store.logLines.map((l) => l.text);
     expect(texts).toContain("=== 开始批量合并 ===");
     expect(texts).toContain("step-1");
     expect(texts).toContain("step-2");
+    expect(texts).toContain("全部已合并，成功分支：main");
     expect(texts).not.toContain("should-not-show");
 
     const step2 = store.logLines.find((l) => l.text === "step-2");
@@ -78,5 +97,48 @@ describe("merge store log wiring", () => {
 
     expect(store.logLines.length).toBe(1);
     expect(store.logLines[0].text).toContain("测试日志-1");
+  });
+});
+
+describe("merge store 冲突结果摘要", () => {
+  it("run() 存在冲突时记录跳过与成功分支日志", async () => {
+    setActivePinia(createPinia());
+    const store = useMergeStore();
+    store.selectedTargets = ["dev", "test"];
+
+    batchMergeResult = {
+      ok: false,
+      merged: [{ type: "merged", source: "fix-1", target: "test", prNumber: "2" }],
+      conflicts: [
+        {
+          type: "conflict",
+          source: "fix-1",
+          target: "dev",
+          reason: "检测到代码冲突（不可合并）",
+          prNumber: "1",
+        },
+      ],
+      noop: [],
+      failures: [],
+    };
+
+    const res = await store.run("org/repo", ["fix-1"]);
+    expect(res?.ok).toBe(false);
+    expect(res?.merged).toEqual([
+      { type: "merged", source: "fix-1", target: "test", prNumber: "2" },
+    ]);
+    expect(res?.conflicts).toEqual([
+      {
+        type: "conflict",
+        source: "fix-1",
+        target: "dev",
+        reason: "检测到代码冲突（不可合并）",
+        prNumber: "1",
+      },
+    ]);
+
+    const texts = store.logLines.map((l) => l.text);
+    expect(texts).toContain("成功合并的分支：fix-1 -> test");
+    expect(texts).toContain("存在冲突已跳过的分支：fix-1 -> dev");
   });
 });

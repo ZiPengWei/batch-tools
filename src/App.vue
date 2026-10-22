@@ -15,7 +15,7 @@
               >
                 <n-card
                   :segmented="{ content: true }"
-                  title="GitLab 认证"
+                  title="CNB 认证"
                 >
                   <template #header-extra>
                     <n-space align="center">
@@ -57,11 +57,11 @@
                               depth="3"
                               :style="styles.caption"
                             >
-                              GitLab URL
+                              CNB API 地址
                             </n-text>
                             <n-input
                               v-model:value="auth.baseUrl"
-                              placeholder="http://..."
+                              placeholder="https://api.cnb.cool"
                             />
                           </n-space>
                         </n-grid-item>
@@ -71,11 +71,11 @@
                               depth="3"
                               :style="styles.caption"
                             >
-                              Access Token
+                              访问令牌 (Access Token)
                             </n-text>
                             <n-input
                               v-model:value="auth.token"
-                              placeholder="glpat-..."
+                              placeholder="在 cnb.cool 个人设置中创建访问令牌"
                               show-password-on="click"
                               type="password"
                             />
@@ -122,7 +122,7 @@
                           depth="3"
                           :style="styles.caption"
                         >
-                          {{ auth.baseUrl || '未设置 GitLab URL' }}
+                          {{ auth.baseUrl || '未设置 CNB API 地址' }}
                         </n-text>
                         <n-text
                           v-if="auth.connected"
@@ -144,7 +144,7 @@
                   <n-card
                     :content-style="styles.cardContent"
                     :style="styles.card"
-                    title="1. 选择项目"
+                    title="1. 选择仓库"
                   >
                     <template #header-extra>
                       <n-button
@@ -161,7 +161,7 @@
                         v-model:value="projects.filter"
                         clearable
                         :disabled="!canUseContent"
-                        placeholder="过滤项目..."
+                        placeholder="过滤仓库..."
                         @update:value="projects.setFilter"
                       />
                       <div
@@ -179,11 +179,11 @@
                               block
                               :class="'gl-list-item'"
                               :data-item-key="String(p.id)"
-                              :data-selected="projects.selectedProjectId === p.id ? 'true' : 'false'"
+                              :data-selected="projects.selectedRepo === p.id ? 'true' : 'false'"
                               :style="styles.listItemButton"
                               text
                               :title="p.display"
-                              :type="projects.selectedProjectId === p.id ? 'primary' : 'default'"
+                              :type="projects.selectedRepo === p.id ? 'primary' : 'default'"
                               @click="onClickProject(p, $event)"
                             >
                               <span class="gl-ellipsis-1">{{ p.display }}</span>
@@ -227,7 +227,7 @@
                   >
                     <template #header-extra>
                       <n-button
-                        :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                        :disabled="!projects.selectedRepo || projects.sourceBranchesLoading"
                         text
                         type="primary"
                         @click="projects.loadAllBranches()"
@@ -239,7 +239,7 @@
                       <n-input
                         v-model:value="sourceFilter"
                         clearable
-                        :disabled="!projects.selectedProjectId || projects.sourceBranchesLoading"
+                        :disabled="!projects.selectedRepo || projects.sourceBranchesLoading"
                         placeholder="过滤源分支..."
                       />
                       <div
@@ -305,7 +305,7 @@
                   >
                     <template #header-extra>
                       <n-button
-                        :disabled="merge.running || !projects.selectedProjectId || !projects.selectedSourceBranch || !merge.selectedTargets.length"
+                        :disabled="merge.running || !projects.selectedRepo || !projects.selectedSourceBranch || !merge.selectedTargets.length"
                         :loading="merge.running"
                         type="primary"
                         @click="onClickBatch"
@@ -392,15 +392,6 @@
 
             <BatchMergeFlowDialog
               ref="batchMergeFlowDialogRef"
-              :conflict-active="conflictVisible"
-              :conflict-mr-web-url="conflictMrWebUrl"
-            />
-
-            <ConflictDialog
-              v-if="conflictVisible"
-              :conflict-data="conflictData"
-              :visible="conflictVisible"
-              @close="conflictVisible = false"
             />
           </n-loading-bar-provider>
         </n-notification-provider>
@@ -410,11 +401,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from './renderer/store/auth'
 import { useProjectsStore } from './renderer/store/projects'
 import { useMergeStore } from './renderer/store/merge'
-import { onMergeConflict } from './renderer/ipc/bridge'
 import BatchMergeFlowDialog, { type BatchMergeFlowDialogExposed } from './renderer/components/BatchMergeFlowDialog.vue'
 import {
   NButton,
@@ -437,8 +427,6 @@ import {
   NCollapseTransition,
   useThemeVars,
 } from './renderer/ui/naive'
-
-const ConflictDialog = defineAsyncComponent(() => import('./renderer/components/ConflictDialog.vue'))
 
 const auth = useAuthStore()
 const projects = useProjectsStore()
@@ -684,7 +672,7 @@ function scrollEventTargetIntoView(e: MouseEvent) {
   fn.call(el, { block: 'nearest' })
 }
 
-function onClickProject(p: { id: number; display: string }, e: MouseEvent) {
+function onClickProject(p: { id: string; display: string }, e: MouseEvent) {
   projects.selectProject({ id: p.id, display: p.display })
   scrollEventTargetIntoView(e)
 }
@@ -711,12 +699,8 @@ watch(
   { immediate: true }
 )
 
-const conflictVisible = ref(false)
-const conflictData = ref<any>(null)
-const conflictMrWebUrl = computed(() => conflictData.value?.mrWebUrl || '')
-
 function onClickBatch() {
-  if (!projects.selectedProjectId) return
+  if (!projects.selectedRepo) return
   if (!projects.selectedSourceBranch) return
   if (!merge.selectedTargets.length) return
   batchMergeFlowDialogRef.value?.openConfirm()
@@ -732,12 +716,6 @@ watch(
 
 onMounted(() => {
   auth.loadLocal()
-
-  onMergeConflict((data) => {
-    conflictData.value = data
-    conflictVisible.value = true
-    batchMergeFlowDialogRef.value?.closeAll()
-  })
 })
 </script>
 

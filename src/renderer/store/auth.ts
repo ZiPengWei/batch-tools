@@ -6,9 +6,11 @@ const isE2E =
   (import.meta as any).env?.VITE_E2E === '1' ||
   String((import.meta as any).env?.MODE || '').toLowerCase() === 'e2e'
 
+export const CNB_AUTH_STORAGE_KEY = 'cnb-auth'
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    baseUrl: 'http://172.16.43.4:30085',
+    baseUrl: 'https://api.cnb.cool',
     token: '',
     rememberToken: false,
     connected: false,
@@ -19,7 +21,7 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     loadLocal() {
       try {
-        const raw = localStorage.getItem('gitlab-auth')
+        const raw = localStorage.getItem(CNB_AUTH_STORAGE_KEY)
         if (raw) {
           const data = JSON.parse(raw) as any
           if (typeof data.baseUrl === 'string') this.baseUrl = data.baseUrl
@@ -36,11 +38,11 @@ export const useAuthStore = defineStore('auth', {
     },
     saveLocal() {
       if (!this.rememberToken) {
-        localStorage.removeItem('gitlab-auth')
+        localStorage.removeItem(CNB_AUTH_STORAGE_KEY)
         return
       }
       localStorage.setItem(
-        'gitlab-auth',
+        CNB_AUTH_STORAGE_KEY,
         JSON.stringify({
           baseUrl: this.baseUrl,
           token: this.token,
@@ -51,7 +53,7 @@ export const useAuthStore = defineStore('auth', {
     async connect() {
       this.error = ''
       if (!this.baseUrl.trim() || !this.token.trim()) {
-        this.error = '请输入 URL 和 Token'
+        this.error = '请输入 CNB API 地址和访问令牌'
         return
       }
       if (isE2E) {
@@ -66,7 +68,7 @@ export const useAuthStore = defineStore('auth', {
         const res = await setAuth({ baseUrl: this.baseUrl.trim(), token: this.token.trim() })
         if (res?.ok) {
           this.connected = true
-          this.userName = res.user?.name || ''
+          this.userName = res.user?.nickname || res.user?.username || ''
           this.saveLocal()
           const projects = useProjectsStore()
           projects.loadProjects()

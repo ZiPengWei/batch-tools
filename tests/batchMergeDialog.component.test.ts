@@ -19,13 +19,19 @@ describe('BatchMergeConfirmDialog', () => {
   })
 
   it('点击确认会触发 run 并发出 run-finish', async () => {
-    const run = vi.fn().mockResolvedValue({ ok: true, mergedCount: 1, noopCount: 0 })
+    const run = vi.fn().mockResolvedValue({
+      ok: true,
+      merged: [{ source: 'feat', target: 'main' }],
+      conflicts: [],
+      noop: [],
+      failures: [],
+    })
 
     const wrapper = mount(BatchMergeConfirmDialog, {
       attachTo: document.body,
       props: {
         show: true,
-        projectId: 1,
+        repo: 'org/repo',
         sourceBranches: ['feat'],
         targetCount: 2,
         logLines: [],
@@ -47,9 +53,49 @@ describe('BatchMergeConfirmDialog', () => {
     }
 
     expect(run).toHaveBeenCalledTimes(1)
-    expect(run).toHaveBeenCalledWith(1, ['feat'])
+    expect(run).toHaveBeenCalledWith('org/repo', ['feat'])
     expect(wrapper.emitted('run-finish')).toBeTruthy()
-    expect(wrapper.emitted('run-finish')![0]?.[0]).toEqual({ ok: true, mergedCount: 1, noopCount: 0 })
+    expect(wrapper.emitted('run-finish')![0]?.[0]).toEqual({
+      ok: true,
+      merged: [{ source: 'feat', target: 'main' }],
+      conflicts: [],
+      noop: [],
+      failures: [],
+    })
+
+    wrapper.unmount()
+  })
+
+  it('repo 为空时点击确认不会触发 run', async () => {
+    const run = vi.fn().mockResolvedValue(null)
+
+    const wrapper = mount(BatchMergeConfirmDialog, {
+      attachTo: document.body,
+      props: {
+        show: true,
+        repo: '',
+        sourceBranches: ['feat'],
+        targetCount: 1,
+        logLines: [],
+        run,
+      },
+    })
+
+    await nextTick()
+
+    const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
+      (b) => (b.textContent || '').trim() === '确认',
+    )
+    expect(confirmBtn).toBeTruthy()
+    ;(confirmBtn as HTMLButtonElement).click()
+
+    for (let i = 0; i < 4; i++) {
+      await nextTick()
+      await Promise.resolve()
+    }
+
+    expect(run).not.toHaveBeenCalled()
+    expect(wrapper.emitted('run-finish')).toBeFalsy()
 
     wrapper.unmount()
   })

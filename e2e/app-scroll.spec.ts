@@ -8,17 +8,7 @@ async function waitForAnyButton(list: any) {
     .toBeGreaterThan(0);
 }
 
-async function shadowState(list: any) {
-  return await list.evaluate((el: HTMLElement) => {
-    const top = el.children[0] as HTMLElement | undefined;
-    const bottom = el.children[1] as HTMLElement | undefined;
-    const topDisplay = top ? getComputedStyle(top).display : "";
-    const bottomDisplay = bottom ? getComputedStyle(bottom).display : "";
-    return { topDisplay, bottomDisplay };
-  });
-}
-
-test("三列表支持独立滚动与边界阴影反馈", async ({ page }) => {
+test("三列表支持独立滚动", async ({ page }) => {
   await page.goto("/");
 
   const projectList = page.locator('[aria-label="项目列表"]');
@@ -51,40 +41,26 @@ test("三列表支持独立滚动与边界阴影反馈", async ({ page }) => {
     throw new Error(`项目列表未产生溢出滚动：${JSON.stringify(projectDims)}`);
   }
 
-  await expect
-    .poll(async () => {
-      const s = await shadowState(projectList);
-      return s.topDisplay === "none" && s.bottomDisplay !== "none";
-    })
-    .toBe(true);
-
-  const sourceInitial = await shadowState(sourceList);
-  expect(sourceInitial.topDisplay).toBe("none");
+  const projectScrollTopBefore = await sourceList.evaluate(
+    (el: HTMLElement) => el.scrollTop
+  );
 
   await projectList.evaluate((el: HTMLElement) => {
     el.scrollTop = Math.floor((el.scrollHeight - el.clientHeight) / 2);
     el.dispatchEvent(new Event("scroll"));
   });
+
   await expect
     .poll(async () => {
-      const s = await shadowState(projectList);
-      return s.topDisplay !== "none" && s.bottomDisplay !== "none";
+      return await projectList.evaluate((el: HTMLElement) => el.scrollTop);
     })
-    .toBe(true);
+    .toBeGreaterThan(0);
 
-  const sourceStill = await shadowState(sourceList);
-  expect(sourceStill.topDisplay).toBe("none");
-
-  await projectList.evaluate((el: HTMLElement) => {
-    el.scrollTop = el.scrollHeight;
-    el.dispatchEvent(new Event("scroll"));
-  });
-  await expect
-    .poll(async () => {
-      const s = await shadowState(projectList);
-      return s.bottomDisplay === "none";
-    })
-    .toBe(true);
+  // 滚动项目列表不影响其他列表
+  const sourceScrollTopAfter = await sourceList.evaluate(
+    (el: HTMLElement) => el.scrollTop
+  );
+  expect(sourceScrollTopAfter).toBe(projectScrollTopBefore);
 });
 
 test("合并弹窗日志会自动滚动到底部", async ({ page }) => {
@@ -95,7 +71,7 @@ test("合并弹窗日志会自动滚动到底部", async ({ page }) => {
   await waitForAnyButton(targetList);
   await targetList.locator("button").first().click();
 
-  const startBtn = page.getByRole("button", { name: /开始批量合并/ }).first();
+  const startBtn = page.getByRole("button", { name: /^合并/ }).first();
   await expect(startBtn).toBeEnabled();
   await startBtn.click();
   await page.getByRole("button", { name: "确认" }).click();

@@ -27,6 +27,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+
+# --- AI 助手工作目录 ---
+.workbuddy/
 # 编辑器和调试器
 .vscode/*
 !.vscode/extensions.json
